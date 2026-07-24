@@ -34,6 +34,9 @@ namespace menu = OC::menu;
 #endif
 // #include "Passencore.h"
 #include "CaptainMIDI.h"
+#ifdef ENABLE_APP_EUCLIDKIT
+#include "EuclidKit.h"
+#endif
 #include "TheDarkestTimeline.h"
 #include "Enigma.h"
 #ifdef ENABLE_APP_NEURAL_NETWORK
@@ -76,6 +79,9 @@ static AppContainer<void // this space intentionally left blank
 #endif
 #ifdef ENABLE_APP_MIDI
   , AppCaptainMIDI
+#endif
+#ifdef ENABLE_APP_EUCLIDKIT
+  , EuclidKit
 #endif
 #ifdef ENABLE_APP_DARKEST_TIMELINE
   , TheDarkestTimeline

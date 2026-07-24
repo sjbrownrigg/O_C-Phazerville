@@ -20,6 +20,7 @@ Not everything can fit at once on Teensy 3.2 hardware, but you can use the [defa
  * [The Darkest Timeline](The-Darkest-Timeline) - Parallel universe sequencer
  * [Dialectic Ping Pong](Dialectic-Ping-Pong)
  * [Enigma](Enigma) – Sequencer of shift registers (Turing Machines)
+ * [EuclidKit](EuclidKit) - 4-track polymetric Euclidean drum sequencer
  * [Harrington 1200](Harrington-1200) - Neo-Riemannian transformations for triad chord progressions
  * Hemisphere - 2 [Applets](#cv-applets) at a time
  * [Low-rents](Low-rents) - Lorenz attractor
@@ -189,7 +190,7 @@ _(note: T41 Audio Applets are not included here)_
 | **Random / Chaos**           | [BitBeat](BitBeat), [Brancher](Brancher), [Calculate](Calculate), [LowerRenz](LowerRenz), [ProbDiv](ProbDiv), [ProbMeloD](ProbMeloD), [Relabi](Relabi), [RndWalk](Random-Walk), [Shredder](Shredder)                                                        | [Low-rents](Low-rents)                                                                              |
 | **Shift Register**           | [ASR](ASR), [TwoRings](TwoRings), [Enigma Jr.](Enigma-Jr), [RunglBook](RunglBook), [ShiftGate](ShiftGate)  | [Enigma](Enigma), [CopierMaschine](Copiermaschine)  |
 | **Switch**                   | [Switch](Switch), [SwitchSeq](Switch-Seq) | [Scenery](Scenery) |
-| **Trigger / Gate Sequencer** | [Burst](Burst), [DivSeq](DivSeq), [DrumMap](DrumMap), [EuclidX](EuclidX), [MarkovPerc](MarkovPerc), [PolyDiv](PolyDiv), [ProbDiv](ProbDiv), [Seq32](Seq32), [ShiftGate](ShiftGate), [TrigSeq](TrigSeq), [TrigSeq16](TrigSeq16)   |     |
+| **Trigger / Gate Sequencer** | [Burst](Burst), [DivSeq](DivSeq), [DrumMap](DrumMap), [EuclidX](EuclidX), [MarkovPerc](MarkovPerc), [PolyDiv](PolyDiv), [ProbDiv](ProbDiv), [Seq32](Seq32), [ShiftGate](ShiftGate), [TrigSeq](TrigSeq), [TrigSeq16](TrigSeq16)   |  [EuclidKit](EuclidKit)   |
 | **VCA**                      | [GatedVCA](Gated-VCA)        |       |
 | **Voltage Utility**          | [AttenOff](AttenOff), [Calculate](Calculate), [Calibr8](Calibr8), [Scope](Scope), [Slew](Slew), [Stairs](Stairs), [Switch](Switch), [Tuner](Tuner), [Trending](Trending), [Voltage](Voltage)                         | [Calibr8or](Calibr8or), [References](References)
 

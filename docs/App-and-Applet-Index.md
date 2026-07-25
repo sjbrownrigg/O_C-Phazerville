@@ -20,7 +20,7 @@ Not everything can fit at once on Teensy 3.2 hardware, but you can use the [defa
  * [The Darkest Timeline](The-Darkest-Timeline) - Parallel universe sequencer
  * [Dialectic Ping Pong](Dialectic-Ping-Pong)
  * [Enigma](Enigma) – Sequencer of shift registers (Turing Machines)
- * [EuclidKit](EuclidKit) - 4-track polymetric Euclidean drum sequencer
+ * [EuclidKit](EuclidKit) - 4-track drum sequencer with Euclidean + Grids engines
  * [Harrington 1200](Harrington-1200) - Neo-Riemannian transformations for triad chord progressions
  * Hemisphere - 2 [Applets](#cv-applets) at a time
  * [Low-rents](Low-rents) - Lorenz attractor

@@ -171,7 +171,7 @@ public:
 SETTINGS_ARRAY_DEFINE(GridGlobals);
 
 // Footer grouping of cursor fields into pages, for layout + page indicator.
-enum EuclidKitPage { PAGE_MAIN, PAGE_MOD, PAGE_GLOBAL, PAGE_MODE };
+enum EuclidKitPage { PAGE_MAIN, PAGE_MOD, PAGE_GLOBAL, PAGE_MODE, PAGE_CAL };
 
 // The full set of editable fields. Which are active (and in what order) depends
 // on the current mode -- see EuclidKit::FieldList().
@@ -180,8 +180,9 @@ enum Field {
   F_FILL, F_PART,                // Grids main
   F_MUTE,                        // main (both)
   F_PROB, F_CV,                  // mod (both)
-  F_MODE,                        // global (both)
+  F_MODE,                        // engine (both)
   F_X, F_Y, F_CHAOS,             // global (Grids)
+  F_CAL_LO, F_CAL_HI,            // CV input calibration (both)
   F_LAST
 };
 
@@ -193,9 +194,11 @@ static const char * const kPartNames[3] = {"BD", "SD", "HH"};
 OC_APP_CLASS(EuclidKit, TWOCCS("EK"), "EuclidKit", "4-Trk Euclid"),
   public HSApplication {
 public:
-  // Persisted: live state (4 tracks + globals) + NUM_PRESETS snapshot slots.
+  // Persisted: live state (4 tracks + globals) + NUM_PRESETS snapshot slots,
+  // plus the two app-level CV calibration values (not part of preset snapshots).
   OC_APP_INTERFACE_DECLARE(EuclidKit,
-    (1 + NUM_PRESETS) * (4 * DrumTrack::storageSize() + GridGlobals::storageSize()));
+    (1 + NUM_PRESETS) * (4 * DrumTrack::storageSize() + GridGlobals::storageSize())
+    + 2 * sizeof(int32_t));
 
   DrumTrack tracks[4];
   GridGlobals globals;
@@ -259,12 +262,14 @@ public:
       int mod_prob = t.probability();
 
       switch (t.cv_target()) {
-        case CV_TARGET_BEATS:       Modulate(mod_beats, i, 0, len); break;
-        case CV_TARGET_ROTATION:    Modulate(mod_rotation, i, 0, len > 0 ? len - 1 : 0); break;
-        case CV_TARGET_PROBABILITY: Modulate(mod_prob, i, 0, 100); break;
+        case CV_TARGET_BEATS:       mod_beats = MapCV(i, 0, len); break;
+        case CV_TARGET_ROTATION:    mod_rotation = MapCV(i, 0, len > 0 ? len - 1 : 0); break;
+        case CV_TARGET_PROBABILITY: mod_prob = MapCV(i, 0, 100); break;
         default: break;
       }
       t.live_probability = (uint8_t)mod_prob;
+      live_beats[i] = mod_beats;
+      live_rotation[i] = mod_rotation;
       t.Regenerate(mod_beats, mod_rotation);
     }
 
@@ -285,15 +290,16 @@ public:
       live_density[i] = t.fill();
       int prob = t.probability();
       switch (t.cv_target()) {
-        case CV_TARGET_DENSITY:     Modulate(live_density[i], i, 0, 255); break;
-        case CV_TARGET_X:           Modulate(live_x, i, 0, 255); break;
-        case CV_TARGET_Y:           Modulate(live_y, i, 0, 255); break;
-        case CV_TARGET_CHAOS:       Modulate(gchaos, i, 0, 255); break;
-        case CV_TARGET_PROBABILITY: Modulate(prob, i, 0, 100); break;
+        case CV_TARGET_DENSITY:     live_density[i] = MapCV(i, 0, 255); break;
+        case CV_TARGET_X:           live_x = MapCV(i, 0, 255); break;
+        case CV_TARGET_Y:           live_y = MapCV(i, 0, 255); break;
+        case CV_TARGET_CHAOS:       gchaos = MapCV(i, 0, 255); break;
+        case CV_TARGET_PROBABILITY: prob = MapCV(i, 0, 100); break;
         default: break;
       }
       t.live_probability = (uint8_t)prob;
     }
+    live_chaos = gchaos;
 
     if (Clock(1)) shared_step = 0; // TR2 reset
     if (Clock(0)) {                // TR1 clock
@@ -355,6 +361,11 @@ public:
 
   void OnLeftButtonPress() {
     if (preset_mode) { preset_mode = false; return; } // encoder press exits
+    // On the calibration page, press captures the current input into the
+    // selected endpoint (learn) rather than toggling edit mode.
+    Field f = CurrentField();
+    if (f == F_CAL_LO) { cv_cal_low = In(focus); ResetCursor(); return; }
+    if (f == F_CAL_HI) { cv_cal_high = In(focus); ResetCursor(); return; }
     CursorToggle();
   }
   void OnLeftButtonLongPress() {
@@ -402,8 +413,7 @@ public:
       case F_MODE: {
         globals.change_value(GLOBAL_SETTING_MODE, direction);
         OnModeChanged();
-        int n; FieldList(n);
-        cursor = n - 1; // Engine is the last field -- stay on it (and keep editing)
+        cursor = IndexOfField(F_MODE); // stay on the Engine field (and keep editing)
         break;
       }
       default: break;
@@ -434,6 +444,19 @@ private:
   int live_x = 128, live_y = 128;
   int live_density[4] = {128, 128, 128, 128};
 
+  // Effective (post-CV) values stashed each Controller tick, so the UI can
+  // show what's actually driving the sequence -- live confirmation of CV.
+  // When a param isn't the track's CV target these equal the stored knob value.
+  int live_beats[4] = {0, 0, 0, 0};
+  int live_rotation[4] = {0, 0, 0, 0};
+  int live_chaos = 0;
+
+  // CV input calibration: the raw input values (pitch units, 1V = 12<<7)
+  // captured at the low and high ends of the user's CV source. CV modulation
+  // maps this span absolutely onto each target's own range. ~0V .. ~6V default.
+  int cv_cal_low = 0;
+  int cv_cal_high = 6 * (12 << 7);
+
   static constexpr char kTrackLetters[4] = {'A', 'B', 'C', 'D'};
 
   bool IsGrids() const { return globals.mode() == MODE_GRIDS; }
@@ -441,21 +464,37 @@ private:
   // Active cursor field list for the current mode (in scroll order).
   const Field* FieldList(int &count) const {
     static const Field euclid[] =
-      {F_LENGTH, F_BEATS, F_ROTATION, F_MUTE, F_PROB, F_CV, F_MODE};
+      {F_LENGTH, F_BEATS, F_ROTATION, F_MUTE, F_PROB, F_CV,
+       F_CAL_LO, F_CAL_HI, F_MODE};
     static const Field grids[] =
-      {F_FILL, F_PART, F_MUTE, F_PROB, F_CV, F_X, F_Y, F_CHAOS, F_MODE};
-    if (IsGrids()) { count = 9; return grids; }
-    count = 7; return euclid;
+      {F_FILL, F_PART, F_MUTE, F_PROB, F_CV, F_X, F_Y, F_CHAOS,
+       F_CAL_LO, F_CAL_HI, F_MODE};
+    if (IsGrids()) { count = 11; return grids; }
+    count = 9; return euclid;
   }
   Field CurrentField() const {
     int n; const Field* f = FieldList(n);
     return f[constrain(cursor, 0, n - 1)];
+  }
+  int IndexOfField(Field want) const {
+    int n; const Field* f = FieldList(n);
+    for (int i = 0; i < n; ++i) if (f[i] == want) return i;
+    return 0;
+  }
+
+  // Map the calibrated CV input span absolutely onto [pmin, pmax].
+  int MapCV(int ch, int pmin, int pmax) const {
+    int span = cv_cal_high - cv_cal_low;
+    if (span < 1) span = 1;
+    long v = (long)(In(ch) - cv_cal_low) * (pmax - pmin) / span + pmin;
+    return constrain((int)v, pmin, pmax);
   }
   int PageOf(Field f) const {
     switch (f) {
       case F_PROB: case F_CV: return PAGE_MOD;
       case F_X: case F_Y: case F_CHAOS: return PAGE_GLOBAL;
       case F_MODE: return PAGE_MODE;
+      case F_CAL_LO: case F_CAL_HI: return PAGE_CAL;
       default: return PAGE_MAIN;
     }
   }
@@ -568,6 +607,7 @@ private:
 
     const int page = PageOf(CurrentField());
     if (page == PAGE_GLOBAL) { DrawGlobalFooter(y); return; }
+    if (page == PAGE_CAL) { DrawCalFooter(y); return; }
     if (page == PAGE_MODE) {
       gfxPrint(1, y, "Engine:"); gfxPrint(46, y, kModeNames[globals.mode()]);
       CursorIf(F_MODE, 46, y, 40);
@@ -578,8 +618,10 @@ private:
     gfxPrint(1, y, label);
     const DrumTrack &t = tracks[focus];
 
+    // Values shown are the effective (post-CV) values -- live_* equal the
+    // stored knob value unless a CV input is modulating that param.
     if (page == PAGE_MOD) {
-      gfxPrint(26, y, "Pr"); gfxPrint(38, y, (int)t.probability());
+      gfxPrint(26, y, "Pr"); gfxPrint(38, y, (int)t.live_probability);
       CursorIf(F_PROB, 26, y, 24);
       gfxPrint(60, y, "CV:"); gfxPrint(78, y, kCVTargetNames[t.cv_target()]);
       CursorIf(F_CV, 60, y, 40);
@@ -588,7 +630,7 @@ private:
 
     // PAGE_MAIN
     if (IsGrids()) {
-      gfxPrint(28, y, "F"); gfxPrint(34, y, (int)t.fill());
+      gfxPrint(28, y, "F"); gfxPrint(34, y, live_density[focus]);
       CursorIf(F_FILL, 28, y, 24);
       gfxPrint(60, y, "Pt"); gfxPrint(74, y, kPartNames[t.part()]);
       CursorIf(F_PART, 60, y, 28);
@@ -599,9 +641,9 @@ private:
 
     gfxPrint(28, y, "L"); gfxPrint(34, y, (int)t.length());
     CursorIf(F_LENGTH, 28, y, 18);
-    gfxPrint(50, y, "B"); gfxPrint(56, y, (int)t.beats());
+    gfxPrint(50, y, "B"); gfxPrint(56, y, live_beats[focus]);
     CursorIf(F_BEATS, 50, y, 18);
-    gfxPrint(72, y, "R"); gfxPrint(78, y, (int)t.rotation());
+    gfxPrint(72, y, "R"); gfxPrint(78, y, live_rotation[focus]);
     CursorIf(F_ROTATION, 72, y, 18);
     gfxPrint(96, y, "Mu"); gfxPrint(108, y, t.mute() ? "on" : "--");
     CursorIf(F_MUTE, 96, y, 24);
@@ -609,12 +651,22 @@ private:
 
   // Grids global page (Euclidean mode has no global page).
   void DrawGlobalFooter(int y) const {
-    gfxPrint(4, y, "X"); gfxPrint(12, y, (int)globals.x());
+    gfxPrint(4, y, "X"); gfxPrint(12, y, live_x);
     CursorIf(F_X, 4, y, 26);
-    gfxPrint(48, y, "Y"); gfxPrint(56, y, (int)globals.y());
+    gfxPrint(48, y, "Y"); gfxPrint(56, y, live_y);
     CursorIf(F_Y, 48, y, 26);
-    gfxPrint(92, y, "Ch"); gfxPrint(104, y, (int)globals.chaos());
+    gfxPrint(92, y, "Ch"); gfxPrint(104, y, live_chaos);
     CursorIf(F_CHAOS, 92, y, 32);
+  }
+
+  // CV input calibration ("learn"): shows the live input voltage and the
+  // selected captured endpoint. Left-encoder press grabs the current input.
+  void DrawCalFooter(int y) const {
+    gfxPrint(1, y, "In"); gfxPos(15, y); gfxPrintVoltage(In(focus));
+    const bool hi = (CurrentField() == F_CAL_HI);
+    gfxPrint(64, y, hi ? "Hi" : "Lo");
+    gfxPos(78, y); gfxPrintVoltage(hi ? cv_cal_high : cv_cal_low);
+    DrawFieldCursor(64, y, 52); // selected endpoint; press to grab input
   }
 
   void DrawPresetBar() const {
@@ -672,6 +724,8 @@ size_t EuclidKit::SaveAppData(util::StreamBufferWriter &stream_buffer) const {
     for (auto &t : preset_tracks[p]) t.Save(stream_buffer);
     preset_globals[p].Save(stream_buffer);
   }
+  stream_buffer.Write((int32_t)cv_cal_low);
+  stream_buffer.Write((int32_t)cv_cal_high);
   return stream_buffer.written();
 }
 
@@ -682,6 +736,8 @@ size_t EuclidKit::RestoreAppData(util::StreamBufferReader &stream_buffer) {
     for (auto &t : preset_tracks[p]) t.Restore(stream_buffer);
     preset_globals[p].Restore(stream_buffer);
   }
+  cv_cal_low = stream_buffer.Read<int32_t>();
+  cv_cal_high = stream_buffer.Read<int32_t>();
   for (auto &t : tracks) t.Regenerate();
   return stream_buffer.read();
 }

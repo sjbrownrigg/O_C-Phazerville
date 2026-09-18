@@ -16,8 +16,8 @@ Per-track settings form one continuous list under the Left Encoder: turn it (whe
 
 The list order, per engine:
 
-- **Euclidean**: Length / Beats / Rotation / Mute  →  Probability / CV target  →  Engine
-- **Grids**: Fill / Part / Mute  →  Probability / CV target  →  X / Y / Chaos  →  Engine
+- **Euclidean**: Length / Beats / Rotation / Mute  →  Probability / CV target  →  CV calibration  →  Engine
+- **Grids**: Fill / Part / Mute  →  Probability / CV target  →  X / Y / Chaos  →  CV calibration  →  Engine
 
 ### Global gestures (both engines)
 
@@ -64,7 +64,9 @@ Saving is how your live kit and all four preset slots survive a power-cycle: ope
 | CV  | Modulates Track A (target set per track)   | Modulates Track B                              | Modulates Track C    | Modulates Track D    |
 | OUT | Track A gate/trigger                       | Track B gate/trigger                            | Track C gate/trigger | Track D gate/trigger |
 
-Each CV input maps one-to-one to its track (CV1 → Track A, and so on). What it modulates is set per track by that track's `CV target`; modulation is applied live around the knob value, so the stored setting is never changed and unpatching returns the track to its baseline. In Grids mode, X / Y / Chaos are global, so pointing a track's CV target at X or Y lets that CV input sweep the shared map position -- the classic Grids live-morph.
+Each CV input maps one-to-one to its track (CV1 → Track A, and so on). What it modulates is set per track by that track's `CV target`. Modulation is **absolute**: the calibrated input span (see [CV Calibration](#cv-calibration)) is mapped straight onto the target parameter's full range, so the input voltage *sets* the value (0V → minimum, full-scale → maximum) and the knob for that parameter is overridden while CV drives it. The on-screen value for a modulated parameter updates live, so you get direct visual confirmation as the voltage moves. In Grids mode, X / Y / Chaos are global, so pointing a track's CV target at X or Y lets that CV input sweep the shared map position -- the classic Grids live-morph.
+
+> **Input range note:** the O_C CV inputs read roughly 0V up to about +6V of positive voltage; higher voltages saturate. If your CV source swings wider (e.g. a 0-10V source), use the calibration below to capture its usable span so the full parameter range stays reachable.
 
 ### The Euclidean engine
 
@@ -82,6 +84,18 @@ All four tracks share one 32-step pattern clock and a single position on the Gri
 - **Part** (per track) -- which of the three Grids parts the track reads: `BD`, `SD`, or `HH`. Defaults are BD/SD/HH/HH, so track D doubles the hi-hat -- give it a different Fill (or CV) for variation.
 
 Probability and the per-track CV targets (Density / X / Y / Chaos / Prob) layer on top of the Grids output.
+
+### CV Calibration
+
+Because CV control is absolute, the module needs to know the voltage span of your CV source so it can map that span onto each parameter's range. This is a **learn / capture** step on the **CV calibration** page (scroll the Left Encoder to it -- second-to-last in the list, just before Engine). It is a global, per-module setting (shared by all four inputs) and is **not** part of preset snapshots.
+
+The calibration page shows the **live input voltage** (`In`) for the currently focused track's CV input, plus the selected endpoint (`Lo` or `Hi`). To calibrate:
+
+1. Patch your CV source (e.g. an attenuator) into the focused track's CV input.
+2. Turn the Left Encoder to select **Lo**, set your source to its minimum, and **press the Left Encoder** to capture it.
+3. Turn to select **Hi**, set your source to its maximum, and **press** to capture that.
+
+From then on, that captured span maps to `0V-end → parameter minimum`, `max-end → parameter maximum`, for every CV target. Watch the live `In` reading while sweeping your source to confirm the range (and to see where the input saturates). The default span is roughly 0V to 6V. Remember a [global save](#firmware-global-gestures-reminder) to keep the calibration across power cycles.
 
 ### Settings
 
@@ -110,7 +124,9 @@ Long-press the **Up button** to open the Preset screen. On the Preset screen:
 | Down Button                | **Load** the selected slot into the live state                |
 | Left Encoder (press)       | Exit the Preset screen (Up long-press also exits)            |
 
-Load is on the Down button so a reflexive press does the non-destructive action. The slot last loaded or saved is marked with a small dot. The live state and all four slots are written to the module's storage by the normal global app-data save (from the App Menu).
+Load is on the Down button so a reflexive press does the non-destructive action. The slot last loaded or saved is marked with a small dot.
+
+> **Remember to do a global save too.** Saving to a preset slot only stores it in working memory -- it does **not** survive a power cycle on its own. To make your slots (and the live state) persist, you must also do the firmware's global save: open the App Menu (hold **Up** + press the **Right Encoder**) and **long-press the Right Encoder**. Without that global save, all four slots are lost on power-off. (See [Firmware global gestures](#firmware-global-gestures-reminder) above and [Saving State](Saving-State).)
 
 ### Screensaver display
 Uses the standard input/output meter screensaver, showing activity on all four channels.

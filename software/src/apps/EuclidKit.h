@@ -205,7 +205,7 @@ public:
   DrumTrack preset_tracks[NUM_PRESETS][4];
   GridGlobals preset_globals[NUM_PRESETS];
 
-  void Start() {
+  FLASHMEM void Start() {
     // Sentinel: freshly-constructed app has all-zero settings (invalid Length).
     // Seed defaults once; InitDefaults() applies every declared default.
     if (!tracks[0].length()) {
@@ -230,11 +230,11 @@ public:
     for (auto &t : tracks) t.Regenerate();
   }
 
-  void SaveSlot(int slot) {
+  FLASHMEM void SaveSlot(int slot) {
     globals.CopySettingsTo(preset_globals[slot]);
     for (int i = 0; i < 4; ++i) tracks[i].CopySettingsTo(preset_tracks[slot][i]);
   }
-  void LoadSlot(int slot) {
+  FLASHMEM void LoadSlot(int slot) {
     preset_globals[slot].CopySettingsTo(globals);
     for (int i = 0; i < 4; ++i) {
       preset_tracks[slot][i].CopySettingsTo(tracks[i]);
@@ -320,7 +320,7 @@ public:
     }
   }
 
-  void View() const {
+  FLASHMEM void View() const {
     gfxHeader("EuclidKit");
     gfxPrint(92, 1, kModeAbbrev[globals.mode()]);
     gfxIcon(118, 1, GAUGE_ICON);
@@ -333,13 +333,13 @@ public:
 
   // -- Buttons --------------------------------------------------------------
 
-  void OnUpButtonLongPress() { // toggle preset screen
+  FLASHMEM void OnUpButtonLongPress() { // toggle preset screen
     preset_mode = !preset_mode;
     if (preset_mode) slot_cursor = active_slot;
     CancelEdit();
     ResetCursor();
   }
-  void OnUpButtonPress() { // preset screen: UP = Save
+  FLASHMEM void OnUpButtonPress() { // preset screen: UP = Save
     if (preset_mode) {
       SaveSlot(slot_cursor);
       active_slot = slot_cursor;
@@ -349,17 +349,17 @@ public:
     focus = (focus + 3) & 3;
     ResetCursor();
   }
-  void OnDownButtonPress() { // preset screen: DOWN = Load
+  FLASHMEM void OnDownButtonPress() { // preset screen: DOWN = Load
     if (preset_mode) { LoadSlot(slot_cursor); active_slot = slot_cursor; return; }
     focus = (focus + 1) & 3;
     ResetCursor();
   }
-  void OnDownButtonLongPress() { // clear manual overrides (Euclidean, not preset)
+  FLASHMEM void OnDownButtonLongPress() { // clear manual overrides (Euclidean, not preset)
     if (preset_mode || IsGrids()) return;
     tracks[focus].ClearManual();
   }
 
-  void OnLeftButtonPress() {
+  FLASHMEM void OnLeftButtonPress() {
     if (preset_mode) { preset_mode = false; return; } // encoder press exits
     // On the calibration page, press captures the current input into the
     // selected endpoint (learn) rather than toggling edit mode.
@@ -368,19 +368,19 @@ public:
     if (f == F_CAL_HI) { cv_cal_high = In(focus); ResetCursor(); return; }
     CursorToggle();
   }
-  void OnLeftButtonLongPress() {
+  FLASHMEM void OnLeftButtonLongPress() {
     if (preset_mode) return;
     tracks[focus].apply_value(TRACK_SETTING_MUTE, !tracks[focus].mute());
   }
 
-  void OnRightButtonPress() { // toggle step (Euclidean only)
+  FLASHMEM void OnRightButtonPress() { // toggle step (Euclidean only)
     if (preset_mode || IsGrids()) return;
     tracks[focus].ToggleStep(grid_cursor);
   }
 
   // -- Encoders -------------------------------------------------------------
 
-  void OnLeftEncoderMove(int direction) {
+  FLASHMEM void OnLeftEncoderMove(int direction) {
     if (preset_mode) {
       slot_cursor = (slot_cursor + direction + NUM_PRESETS) % NUM_PRESETS;
       ResetCursor();
@@ -420,7 +420,7 @@ public:
     }
   }
 
-  void OnRightEncoderMove(int direction) {
+  FLASHMEM void OnRightEncoderMove(int direction) {
     if (preset_mode || IsGrids()) return; // step cursor: Euclidean only
     uint8_t len = tracks[focus].length();
     grid_cursor = (grid_cursor + direction + len) % len;
@@ -509,7 +509,7 @@ private:
     if (IsGrids()) { count = 6; return grids; }
     count = 4; return euclid;
   }
-  void AdjustCVTarget(DrumTrack &t, int dir) {
+  FLASHMEM void AdjustCVTarget(DrumTrack &t, int dir) {
     int n; const uint8_t* list = CVTargetList(n);
     int idx = 0;
     for (int k = 0; k < n; ++k) if (list[k] == t.cv_target()) { idx = k; break; }
@@ -517,7 +517,7 @@ private:
     t.apply_value(TRACK_SETTING_CV_TARGET, list[idx]);
   }
   // On mode change, drop CV targets not valid for the new mode, clamp cursor.
-  void OnModeChanged() {
+  FLASHMEM void OnModeChanged() {
     int n; const uint8_t* list = CVTargetList(n);
     for (auto &t : tracks) {
       bool ok = false;
@@ -555,7 +555,7 @@ private:
     return level > (255 - (int)t.fill());
   }
 
-  void DrawTrackRow(int i) const {
+  FLASHMEM void DrawTrackRow(int i) const {
     const int y = 12 + i * 10;
     const DrumTrack &t = tracks[i];
 
@@ -592,16 +592,16 @@ private:
     }
   }
 
-  void DrawFieldCursor(int x, int y, int w) const {
+  FLASHMEM void DrawFieldCursor(int x, int y, int w) const {
     if (EditMode()) gfxInvert(x - 1, y - 1, w + 2, 9);
     else gfxFrame(x - 1, y - 1, w + 2, 9);
   }
   // Box the field at (x,w) if it is the current cursor field.
-  void CursorIf(Field f, int x, int y, int w) const {
+  FLASHMEM void CursorIf(Field f, int x, int y, int w) const {
     if (CurrentField() == f) DrawFieldCursor(x, y, w);
   }
 
-  void DrawParams() const {
+  FLASHMEM void DrawParams() const {
     const int y = 52;
     gfxLine(0, y - 2, 127, y - 2);
 
@@ -650,7 +650,7 @@ private:
   }
 
   // Grids global page (Euclidean mode has no global page).
-  void DrawGlobalFooter(int y) const {
+  FLASHMEM void DrawGlobalFooter(int y) const {
     gfxPrint(4, y, "X"); gfxPrint(12, y, live_x);
     CursorIf(F_X, 4, y, 26);
     gfxPrint(48, y, "Y"); gfxPrint(56, y, live_y);
@@ -661,7 +661,7 @@ private:
 
   // CV input calibration ("learn"): shows the live input voltage and the
   // selected captured endpoint. Left-encoder press grabs the current input.
-  void DrawCalFooter(int y) const {
+  FLASHMEM void DrawCalFooter(int y) const {
     gfxPrint(1, y, "In"); gfxPos(15, y); gfxPrintVoltage(In(focus));
     const bool hi = (CurrentField() == F_CAL_HI);
     gfxPrint(64, y, hi ? "Hi" : "Lo");
@@ -669,7 +669,7 @@ private:
     DrawFieldCursor(64, y, 52); // selected endpoint; press to grab input
   }
 
-  void DrawPresetBar() const {
+  FLASHMEM void DrawPresetBar() const {
     const int y = 52;
     gfxLine(0, y - 2, 127, y - 2);
 
@@ -700,11 +700,11 @@ private:
 constexpr char EuclidKit::kTrackLetters[4];
 
 // App stubs
-void EuclidKit::Init() { BaseStart(); }
+FLASHMEM void EuclidKit::Init() { BaseStart(); }
 
 void EuclidKit::Process(OC::IOFrame *ioframe) { BaseController(ioframe); }
 
-void EuclidKit::GetIOConfig(OC::IOConfig &ioconfig) const {
+FLASHMEM void EuclidKit::GetIOConfig(OC::IOConfig &ioconfig) const {
   using namespace OC;
   ioconfig.digital_inputs[DIGITAL_INPUT_1].set("Clock");
   ioconfig.digital_inputs[DIGITAL_INPUT_2].set("Reset");
@@ -717,7 +717,7 @@ void EuclidKit::GetIOConfig(OC::IOConfig &ioconfig) const {
   ioconfig.outputs[3].set("Trk D", OUTPUT_MODE_GATE);
 }
 
-size_t EuclidKit::SaveAppData(util::StreamBufferWriter &stream_buffer) const {
+FLASHMEM size_t EuclidKit::SaveAppData(util::StreamBufferWriter &stream_buffer) const {
   for (auto &t : tracks) t.Save(stream_buffer);
   globals.Save(stream_buffer);
   for (int p = 0; p < NUM_PRESETS; ++p) {
@@ -729,7 +729,7 @@ size_t EuclidKit::SaveAppData(util::StreamBufferWriter &stream_buffer) const {
   return stream_buffer.written();
 }
 
-size_t EuclidKit::RestoreAppData(util::StreamBufferReader &stream_buffer) {
+FLASHMEM size_t EuclidKit::RestoreAppData(util::StreamBufferReader &stream_buffer) {
   for (auto &t : tracks) t.Restore(stream_buffer);
   globals.Restore(stream_buffer);
   for (int p = 0; p < NUM_PRESETS; ++p) {
@@ -742,19 +742,19 @@ size_t EuclidKit::RestoreAppData(util::StreamBufferReader &stream_buffer) {
   return stream_buffer.read();
 }
 
-void EuclidKit::HandleAppEvent(OC::AppEvent event) {
+FLASHMEM void EuclidKit::HandleAppEvent(OC::AppEvent event) {
   if (event == OC::APP_EVENT_RESUME) Resume();
 }
 
 void EuclidKit::Loop() {}
 
-void EuclidKit::DrawMenu() const { BaseView(); }
+FLASHMEM void EuclidKit::DrawMenu() const { BaseView(); }
 
-void EuclidKit::DrawScreensaver() const { BaseScreensaver(); }
+FLASHMEM void EuclidKit::DrawScreensaver() const { BaseScreensaver(); }
 
 void EuclidKit::DrawDebugInfo() const {}
 
-void EuclidKit::HandleButtonEvent(const UI::Event &event) {
+FLASHMEM void EuclidKit::HandleButtonEvent(const UI::Event &event) {
   if (event.control == OC::CONTROL_BUTTON_L) {
     if (event.type == UI::EVENT_BUTTON_LONG_PRESS) OnLeftButtonLongPress();
     if (event.type == UI::EVENT_BUTTON_PRESS) OnLeftButtonPress();
@@ -771,7 +771,7 @@ void EuclidKit::HandleButtonEvent(const UI::Event &event) {
   }
 }
 
-void EuclidKit::HandleEncoderEvent(const UI::Event &event) {
+FLASHMEM void EuclidKit::HandleEncoderEvent(const UI::Event &event) {
   if (event.control == OC::CONTROL_ENCODER_L) OnLeftEncoderMove(event.value);
   if (event.control == OC::CONTROL_ENCODER_R) OnRightEncoderMove(event.value);
 }

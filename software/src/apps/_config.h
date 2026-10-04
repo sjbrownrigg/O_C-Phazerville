@@ -43,7 +43,9 @@ namespace menu = OC::menu;
 #include "NeuralNetwork.h"
 #endif
 #include "ScaleEditor.h"
+#ifndef NO_APP_WAVEFORM_EDITOR
 #include "WaveformEditor.h"
+#endif
 #include "PongGame.h"
 #include "Backup.h"
 #include "SETTINGS.h"
@@ -138,7 +140,7 @@ static AppContainer<void // this space intentionally left blank
   , AppPong
 #endif
   , AppScaleEditor
-#ifndef NO_HEMISPHERE
+#if !defined(NO_HEMISPHERE) && !defined(NO_APP_WAVEFORM_EDITOR)
   , AppWaveformEditor
 #endif
   , AppBackup

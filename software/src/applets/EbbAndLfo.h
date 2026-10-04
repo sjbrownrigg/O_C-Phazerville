@@ -145,112 +145,7 @@ public:
   void View() override {
     DrawInterface(false);
   }
-  void DrawInterface(bool fullscreen) {
-    const int x = (1-fullscreen)*gfx_offset;
-    const int w = (fullscreen+1)*64;
-    // waveform display
-    ForEachChannel(ch) {
-      const int h = 19;
-
-      int bottom = 32 + (h + 1) * ch;
-      int last = bottom;
-      for (int i = 0; i < w; i++) {
-        ProcessSample(slope_mod, shape_mod, fold_mod, 0xffffffff / w * i,
-                      disp_sample);
-        int next = 0;
-        switch (output(ch)) {
-        case UNIPOLAR:
-          next = bottom - disp_sample.unipolar * h / 65535 * level_mod / 1000;
-          break;
-        case BIPOLAR:
-          next = bottom -
-                 (disp_sample.bipolar * level_mod / 1000 + 32767) * h / 65535;
-          break;
-        case EOA:
-          next = bottom - ((disp_sample.flags & FLAG_EOA) ? h : 0);
-          break;
-        case EOR:
-          next = bottom - ((disp_sample.flags & FLAG_EOR) ? h : 0);
-          break;
-        }
-        if (i > 0)
-          graphics.drawLine(x + i - 1, last, x + i, next);
-        last = next;
-      }
-    }
-
-    // position is first 6 bits of phase, which gives 0 through 63.
-    // fullscreen uses 7 bits, 0 to 127
-    uint32_t p = phase >> (26-fullscreen);
-    graphics.drawLine(x+p, 12, x+p, 52);
-
-    const int param_y = 55;
-    bool uses_cursor = false;
-    switch (cursor) {
-    case LEVEL:
-      gfxPrint(0, param_y, "Level: ");
-      gfxPrint(level);
-
-      break;
-    case FREQUENCY:
-    case CLOCKED:
-      uses_cursor = true;
-      gfxStartCursor(2, param_y);
-      if (clocked) {
-        if (ratio >= 0) {
-          gfxPrint("x");
-          gfxPrint(ratio + 1);
-        } else {
-          gfxPrint("/");
-          gfxPrint(-ratio + 1);
-        }
-      } else {
-        gfxPrintFreqFromPitch(pitch);
-      }
-      gfxEndCursor(cursor == FREQUENCY);
-
-      gfxStartCursor(54, param_y);
-      gfxPrintIcon(clocked ? CLOCK_ICON : VOCT_ICON);
-      gfxEndCursor(cursor == CLOCKED);
-      break;
-    case SLOPE_VAL:
-      gfxPrint(0, param_y, "Slope: ");
-      gfxPrint(slope);
-      break;
-    case SHAPE_VAL:
-      gfxPrint(0, param_y, "Shape: ");
-      gfxPrint(shape);
-      break;
-    case FOLD_VAL:
-      gfxPrint(0, param_y, "Fold: ");
-      gfxPrint(fold);
-      break;
-    case OUTPUT_MODES:
-      gfxPrint(0, param_y, OutputLabel(0));
-      gfxPrint(":");
-      gfxPrint(out_labels[output(0)]);
-      gfxPrint(" ");
-      gfxPrint(OutputLabel(1));
-      gfxPrint(":");
-      gfxPrint(out_labels[output(1)]);
-      break;
-    case INPUT_MODES:
-      ForEachChannel(ch) {
-        gfxIcon(0 + ch * 32, param_y, CV_ICON);
-        gfxBitmap(8 + ch * 32, param_y, 3, ch ? SUB_TWO : SUP_ONE);
-        gfxPrint(13 + ch * 32, param_y,
-                 (ch == 1 && cv_type(ch) == FREQ) ? "Am"
-                                                  : cv_labels[cv_type(ch)]);
-      }
-      break;
-    case ONESHOT_MODE:
-      gfxPrint(0, param_y, "Oneshot:");
-      gfxIcon(54, param_y, oneshot_mode ? CHECK_ON_ICON : CHECK_OFF_ICON);
-      break;
-    }
-    if (!uses_cursor && EditMode())
-      gfxInvert(0, 55, 64, 9);
-  }
+  void DrawInterface(bool fullscreen);
 
   void OnButtonPress() {
     switch (cursor) {
@@ -437,3 +332,111 @@ private:
   CV cv_type(int ch) { return (CV)((cv >> ((1 - ch) * 2)) & 0b11); }
 
 };
+
+FLASHMEM void EbbAndLfo::DrawInterface(bool fullscreen) {
+  const int x = (1-fullscreen)*gfx_offset;
+  const int w = (fullscreen+1)*64;
+  // waveform display
+  ForEachChannel(ch) {
+    const int h = 19;
+
+    int bottom = 32 + (h + 1) * ch;
+    int last = bottom;
+    for (int i = 0; i < w; i++) {
+      ProcessSample(slope_mod, shape_mod, fold_mod, 0xffffffff / w * i,
+                    disp_sample);
+      int next = 0;
+      switch (output(ch)) {
+      case UNIPOLAR:
+        next = bottom - disp_sample.unipolar * h / 65535 * level_mod / 1000;
+        break;
+      case BIPOLAR:
+        next = bottom -
+               (disp_sample.bipolar * level_mod / 1000 + 32767) * h / 65535;
+        break;
+      case EOA:
+        next = bottom - ((disp_sample.flags & FLAG_EOA) ? h : 0);
+        break;
+      case EOR:
+        next = bottom - ((disp_sample.flags & FLAG_EOR) ? h : 0);
+        break;
+      }
+      if (i > 0)
+        graphics.drawLine(x + i - 1, last, x + i, next);
+      last = next;
+    }
+  }
+
+  // position is first 6 bits of phase, which gives 0 through 63.
+  // fullscreen uses 7 bits, 0 to 127
+  uint32_t p = phase >> (26-fullscreen);
+  graphics.drawLine(x+p, 12, x+p, 52);
+
+  const int param_y = 55;
+  bool uses_cursor = false;
+  switch (cursor) {
+  case LEVEL:
+    gfxPrint(0, param_y, "Level: ");
+    gfxPrint(level);
+
+    break;
+  case FREQUENCY:
+  case CLOCKED:
+    uses_cursor = true;
+    gfxStartCursor(2, param_y);
+    if (clocked) {
+      if (ratio >= 0) {
+        gfxPrint("x");
+        gfxPrint(ratio + 1);
+      } else {
+        gfxPrint("/");
+        gfxPrint(-ratio + 1);
+      }
+    } else {
+      gfxPrintFreqFromPitch(pitch);
+    }
+    gfxEndCursor(cursor == FREQUENCY);
+
+    gfxStartCursor(54, param_y);
+    gfxPrintIcon(clocked ? CLOCK_ICON : VOCT_ICON);
+    gfxEndCursor(cursor == CLOCKED);
+    break;
+  case SLOPE_VAL:
+    gfxPrint(0, param_y, "Slope: ");
+    gfxPrint(slope);
+    break;
+  case SHAPE_VAL:
+    gfxPrint(0, param_y, "Shape: ");
+    gfxPrint(shape);
+    break;
+  case FOLD_VAL:
+    gfxPrint(0, param_y, "Fold: ");
+    gfxPrint(fold);
+    break;
+  case OUTPUT_MODES:
+    gfxPrint(0, param_y, OutputLabel(0));
+    gfxPrint(":");
+    gfxPrint(out_labels[output(0)]);
+    gfxPrint(" ");
+    gfxPrint(OutputLabel(1));
+    gfxPrint(":");
+    gfxPrint(out_labels[output(1)]);
+    break;
+  case INPUT_MODES:
+    ForEachChannel(ch) {
+      gfxIcon(0 + ch * 32, param_y, CV_ICON);
+      gfxBitmap(8 + ch * 32, param_y, 3, ch ? SUB_TWO : SUP_ONE);
+      gfxPrint(13 + ch * 32, param_y,
+               (ch == 1 && cv_type(ch) == FREQ) ? "Am"
+                                                : cv_labels[cv_type(ch)]);
+    }
+    break;
+  case ONESHOT_MODE:
+    gfxPrint(0, param_y, "Oneshot:");
+    gfxIcon(54, param_y, oneshot_mode ? CHECK_ON_ICON : CHECK_OFF_ICON);
+    break;
+  }
+  if (!uses_cursor && EditMode())
+    gfxInvert(0, 55, 64, 9);
+}
+

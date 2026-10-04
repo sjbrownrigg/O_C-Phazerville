@@ -146,9 +146,7 @@ public:
         }
     }
 
-    void View() {
-        DrawRing();
-    }
+    void View();
 
     void OnButtonPress() {
         enum {
@@ -347,3 +345,8 @@ private:
             }
     }
 };
+
+FLASHMEM void EuclidO::View() {
+    DrawRing();
+}
+

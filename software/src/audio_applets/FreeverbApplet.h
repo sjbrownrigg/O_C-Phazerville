@@ -5,16 +5,7 @@ class ReverbApplet : public HemisphereAudioApplet {
         const char* applet_name() {
             return "Reverb";
         }
-        void Start() override {
-            if (!reverb) {
-              reverb = GetFreeverb();
-            }
-            PatchCable(input, 0, dry_wet_mixer, 1);
-            if (!reverb) return;
-            PatchCable(input, 0, *reverb, 0);
-            PatchCable(*reverb, 0, filter, 0);
-            PatchCable(filter, 0, dry_wet_mixer, 0);
-        }
+        void Start() override;
         void Unload() override {
           if (reverb) ReleaseFreeverb(reverb);
           reverb = nullptr;
@@ -40,49 +31,7 @@ class ReverbApplet : public HemisphereAudioApplet {
             dry_wet_mixer.gain(1, 1.0f - m);
         }
 
-        void View() override {
-            if (!reverb) {
-              gfxPrint(1, 15, "Out Of RAM !!!");
-              return;
-            };
-            gfxPrint(1, 15, "Size:");
-            gfxStartCursor();
-            graphics.printf("%3d%%", size);
-            gfxEndCursor(cursor == SIZE);
-
-            gfxStartCursor();
-            gfxPrint(size_cv);
-            gfxEndCursor(cursor == SIZE_CV, false, size_cv.InputName());
-
-            gfxPrint(1, 25, "Damp:");
-            gfxStartCursor();
-            graphics.printf("%3d%%", damp);
-            gfxEndCursor(cursor == DAMP);
-
-            gfxStartCursor();
-            gfxPrint(damp_cv);
-            gfxEndCursor(cursor == DAMP_CV, false, damp_cv.InputName());
-
-            gfxPrint(1, 35, "C:");
-            gfxStartCursor();
-            graphics.printf("%5dHz", cutoff);
-            gfxEndCursor(cursor == CUTOFF);
-
-            gfxStartCursor();
-            gfxPrint(cutoff_cv);
-            gfxEndCursor(cursor == CUTOFF_CV, false, cutoff_cv.InputName());
-
-            gfxPrint(1, 45, "Mix:");
-            gfxStartCursor();
-            graphics.printf("%3d%%", mix);
-            gfxEndCursor(cursor == MIX);
-            
-            gfxStartCursor();
-            gfxPrint(mix_cv);
-            gfxEndCursor(cursor == MIX_CV, false, mix_cv.InputName());  
-
-            gfxDisplayInputMapEditor();
-        }
+        void View() override;
 
         void OnDataRequest(std::array<uint64_t, CONFIG_SIZE>& data) override {
             data[0] = PackPackables(mix, size, damp);
@@ -184,3 +133,59 @@ class ReverbApplet : public HemisphereAudioApplet {
         CVInputMap damp_cv;
         CVInputMap cutoff_cv;
     };
+
+FLASHMEM void ReverbApplet::View() {
+    if (!reverb) {
+      gfxPrint(1, 15, "Out Of RAM !!!");
+      return;
+    };
+    gfxPrint(1, 15, "Size:");
+    gfxStartCursor();
+    graphics.printf("%3d%%", size);
+    gfxEndCursor(cursor == SIZE);
+
+    gfxStartCursor();
+    gfxPrint(size_cv);
+    gfxEndCursor(cursor == SIZE_CV, false, size_cv.InputName());
+
+    gfxPrint(1, 25, "Damp:");
+    gfxStartCursor();
+    graphics.printf("%3d%%", damp);
+    gfxEndCursor(cursor == DAMP);
+
+    gfxStartCursor();
+    gfxPrint(damp_cv);
+    gfxEndCursor(cursor == DAMP_CV, false, damp_cv.InputName());
+
+    gfxPrint(1, 35, "C:");
+    gfxStartCursor();
+    graphics.printf("%5dHz", cutoff);
+    gfxEndCursor(cursor == CUTOFF);
+
+    gfxStartCursor();
+    gfxPrint(cutoff_cv);
+    gfxEndCursor(cursor == CUTOFF_CV, false, cutoff_cv.InputName());
+
+    gfxPrint(1, 45, "Mix:");
+    gfxStartCursor();
+    graphics.printf("%3d%%", mix);
+    gfxEndCursor(cursor == MIX);
+    
+    gfxStartCursor();
+    gfxPrint(mix_cv);
+    gfxEndCursor(cursor == MIX_CV, false, mix_cv.InputName());  
+
+    gfxDisplayInputMapEditor();
+}
+
+FLASHMEM void ReverbApplet::Start() {
+    if (!reverb) {
+      reverb = GetFreeverb();
+    }
+    PatchCable(input, 0, dry_wet_mixer, 1);
+    if (!reverb) return;
+    PatchCable(input, 0, *reverb, 0);
+    PatchCable(*reverb, 0, filter, 0);
+    PatchCable(filter, 0, dry_wet_mixer, 0);
+}
+

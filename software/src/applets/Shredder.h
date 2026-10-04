@@ -97,11 +97,7 @@ public:
         }
     }
 
-    void View() {
-        DrawParams();
-        DrawMeters();
-        DrawGrid();
-    }
+    void View();
 
     void AuxButton() {
       if (cursor < 2) {
@@ -347,3 +343,10 @@ private:
         }
     }
 };
+
+FLASHMEM void Shredder::View() {
+    DrawParams();
+    DrawMeters();
+    DrawGrid();
+}
+

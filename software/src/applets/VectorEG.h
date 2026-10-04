@@ -76,9 +76,7 @@ public:
         }
     }
 
-    void View() {
-        DrawInterface();
-    }
+    void View();
 
     void AuxButton() {
       modshape = cursor & 1;
@@ -231,4 +229,9 @@ private:
     int ones(int n) {return (n / 100);}
     int hundredths(int n) {return (n % 100);}
 };
+
+FLASHMEM void VectorEG::View() {
+    DrawInterface();
+}
+
 #endif

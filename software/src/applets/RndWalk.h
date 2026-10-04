@@ -84,9 +84,7 @@ public:
         }
     }
 
-    void View() {
-        DrawDisplay();
-    }
+    void View();
 
     // void OnButtonPress() { }
 
@@ -267,3 +265,8 @@ private:
         one_minus_alpha = 1.0f - alpha;
     }
 };
+
+FLASHMEM void RndWalk::View() {
+    DrawDisplay();
+}
+

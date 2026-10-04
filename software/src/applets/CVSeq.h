@@ -190,95 +190,7 @@ public:
 
     void View() final;
 
-    void OnButtonPress() override {
-        if (random_menu_active) {
-            switch (random_menu_cursor.cursor_pos()) {
-                case RandomCursor::RANDOM_CH1:
-                    random_channels[0] ^= true;
-                    break;
-                case RandomCursor::RANDOM_CH2:
-                    random_channels[1] ^= true;
-                    break;
-                case RandomCursor::RANDOM_VALUES:
-                    random_values();
-                    random_menu_active = false;
-                    break;
-                case RandomCursor::RANDOM_TRANSPOSE:
-                    random_transpose();
-                    random_menu_active = false;
-                    break;
-                case RandomCursor::RANDOM_STEPS:
-                    random_steps();
-                    Reset();
-                    random_menu_active = false;
-                    break;
-                case RandomCursor::RANDOM_CANCEL:
-                    random_menu_active = false;
-                    break;
-                case RandomCursor::RANDOM_ZERO:
-                    zero_steps();
-                    Reset();
-                    random_menu_active = false;
-                    break;
-                case RandomCursor::RANDOM_INIT:
-                    init_steps();
-                    Reset();
-                    random_menu_active = false;
-                    break;
-            }
-
-            return;
-        }
-
-        if (cursor == CVSeqCursor::RESET) {
-            Reset();
-        } else if (cursor == CVSeqCursor::RANDOM) {
-            // Open random view.
-            random_menu_active = true;
-            random_menu_cursor.Init(0, RandomCursor::MAX_RANDOM_CURSOR - 1);
-            random_menu_cursor.Scroll(RandomCursor::RANDOM_CANCEL);
-        } else if (cursor == CVSeqCursor::TRANS_MODE) {
-            transpose_in_semitones ^= true;
-        } else if (cursor == CVSeqCursor::LOOP1) {
-            loops[0].enabled ^= true;
-            on_loop_toggle(0);
-        } else if (cursor == CVSeqCursor::LOOP2) {
-            loops[1].enabled ^= true;
-            on_loop_toggle(1);
-        } else if (cursor == CVSeqCursor::LOOP_FLIP) {
-            loops[0].enabled ^= true;
-            loops[1].enabled ^= true;
-            on_loop_toggle(0);
-            on_loop_toggle(1);
-        } else if (cursor == CVSeqCursor::VALUE_ZERO) {
-            cv_values[cv_value_index] = 0;
-        } else if (cursor == CVSeqCursor::VALUE_COPY) {
-            cv_value_clipboard = cv_values[cv_value_index];
-        } else if (cursor == CVSeqCursor::VALUE_PASTE) {
-            cv_values[cv_value_index] = cv_value_clipboard;
-        } else if (cursor == CVSeqCursor::CHANNEL_LOOP) {
-            // Replace whichever point is closer to step_index. Naturally
-            // extends when outside, contracts the nearer side when inside,
-            // and collapses to a single step when step_index sits on a point
-            // (in which case we move the *other* marker, since snapping the
-            // one already on this step would be a no-op).
-            const int d0 = abs((int)step_index - (int)loops[channel_index].points[0]);
-            const int d1 = abs((int)step_index - (int)loops[channel_index].points[1]);
-            const uint8_t which = (d0 == 0) ? 1 : (d1 == 0 ? 0 : (d1 < d0 ? 1 : 0));
-            loops[channel_index].points[which] = step_index;
-            on_loop_points_changed(channel_index);
-        } else if (cursor == CVSeqCursor::GENERAL_COPY_0_TO_1) {
-            copy_channel(0, 1);
-        } else if (cursor == CVSeqCursor::GENERAL_COPY_1_TO_0) {
-            copy_channel(1, 0);
-        } else {
-            if (EditMode()) {
-                cv_value_select = step_select = false;
-            }
-
-            CursorToggle();
-        }
-    }
+    void OnButtonPress() override;
 
     void AuxButton() override {
         if (random_menu_active) {
@@ -302,73 +214,7 @@ public:
         }
     }
 
-    void OnEncoderMove(int direction) override {
-        if (random_menu_active) {
-            random_menu_cursor.Scroll(direction);
-            return;
-        }
-
-        if (!EditMode()) {
-            MoveCursor(cursor, direction, CVSeqCursor::MAX_CURSOR - 1);
-            return;
-        }
-
-        if (cv_value_select) {
-            // If selecting which CV value to edit, just move the index.
-            cv_value_index = constrain(cv_value_index + direction, 0, MAX_CV_VALUES - 1);
-            return;
-        }
-
-        if (step_select) {
-            // If selecting which step to edit, just move the index.
-            step_index = constrain(step_index + direction, 0, MAX_STEPS - 1);
-            return;
-        }
-
-        // Edit parameter.
-        switch (cursor) {
-        case CVSeqCursor::IN2_MODE:
-            input2_mode = (Input2Mode)constrain(input2_mode + direction, 0, Input2Mode::MAX_INPUT2_MODE - 1);
-            break;
-        case CVSeqCursor::OUT2_MODE:
-            output2_mode = (Output2Mode)constrain(output2_mode + direction, 0, Output2Mode::MAX_OUTPUT2_MODE - 1);
-            break;
-        case CVSeqCursor::QSELECT:
-            // Encoder ramp is OFF, Q1, Q2, … — OFF sits one click below Q1.
-            if (quantize_off) {
-                if (direction > 0) quantize_off = false;
-            } else if (qselect == 0 && direction < 0) {
-                quantize_off = true;
-            } else {
-                qselect = constrain(qselect + direction, 0, QUANT_CHANNEL_COUNT - 1);
-            }
-            break;
-        case CVSeqCursor::VALUE_INDEX:
-            cv_value_index = constrain(cv_value_index + direction, 0, MAX_CV_VALUES - 1);
-            break;
-        case CVSeqCursor::VALUE_CV:
-            cv_values[cv_value_index] = constrain(cv_values[cv_value_index] + direction, -127, 127);
-            break;
-        case CVSeqCursor::VALUE_NOTE:
-            cv_values[cv_value_index] = constrain(((cv_values[cv_value_index] >> 1) + direction) * 2, -127, 127);
-            break;
-        case CVSeqCursor::CHANNEL_INDEX:
-            channel_index = constrain(channel_index + direction, 0, 1);
-            break;
-        case CVSeqCursor::CHANNEL_STEPS:
-            num_steps[channel_index] = constrain(num_steps[channel_index] + direction, 1, MAX_STEPS);
-            break;
-        case CVSeqCursor::CHANNEL_STEP:
-            step_index = constrain(step_index + direction, 0, MAX_STEPS - 1);
-            break;
-        case CVSeqCursor::CHANNEL_VALUE:
-            steps[channel_index][step_index].value = constrain(steps[channel_index][step_index].value + direction, 0, MAX_CV_VALUES - 1);
-            break;
-        case CVSeqCursor::CHANNEL_CLOCKS:
-            steps[channel_index][step_index].clocks = constrain(steps[channel_index][step_index].clocks + direction, 0, 31);
-            break;
-        }
-    }
+    void OnEncoderMove(int direction) override;
 
     uint64_t OnDataRequest() override {
         uint64_t data = 0;
@@ -1086,6 +932,165 @@ private:
         steps[1][1] = Step{5, 4};
     }
 };
+
+FLASHMEM void CVSeq::OnEncoderMove(int direction) {
+    if (random_menu_active) {
+        random_menu_cursor.Scroll(direction);
+        return;
+    }
+
+    if (!EditMode()) {
+        MoveCursor(cursor, direction, CVSeqCursor::MAX_CURSOR - 1);
+        return;
+    }
+
+    if (cv_value_select) {
+        // If selecting which CV value to edit, just move the index.
+        cv_value_index = constrain(cv_value_index + direction, 0, MAX_CV_VALUES - 1);
+        return;
+    }
+
+    if (step_select) {
+        // If selecting which step to edit, just move the index.
+        step_index = constrain(step_index + direction, 0, MAX_STEPS - 1);
+        return;
+    }
+
+    // Edit parameter.
+    switch (cursor) {
+    case CVSeqCursor::IN2_MODE:
+        input2_mode = (Input2Mode)constrain(input2_mode + direction, 0, Input2Mode::MAX_INPUT2_MODE - 1);
+        break;
+    case CVSeqCursor::OUT2_MODE:
+        output2_mode = (Output2Mode)constrain(output2_mode + direction, 0, Output2Mode::MAX_OUTPUT2_MODE - 1);
+        break;
+    case CVSeqCursor::QSELECT:
+        // Encoder ramp is OFF, Q1, Q2, … — OFF sits one click below Q1.
+        if (quantize_off) {
+            if (direction > 0) quantize_off = false;
+        } else if (qselect == 0 && direction < 0) {
+            quantize_off = true;
+        } else {
+            qselect = constrain(qselect + direction, 0, QUANT_CHANNEL_COUNT - 1);
+        }
+        break;
+    case CVSeqCursor::VALUE_INDEX:
+        cv_value_index = constrain(cv_value_index + direction, 0, MAX_CV_VALUES - 1);
+        break;
+    case CVSeqCursor::VALUE_CV:
+        cv_values[cv_value_index] = constrain(cv_values[cv_value_index] + direction, -127, 127);
+        break;
+    case CVSeqCursor::VALUE_NOTE:
+        cv_values[cv_value_index] = constrain(((cv_values[cv_value_index] >> 1) + direction) * 2, -127, 127);
+        break;
+    case CVSeqCursor::CHANNEL_INDEX:
+        channel_index = constrain(channel_index + direction, 0, 1);
+        break;
+    case CVSeqCursor::CHANNEL_STEPS:
+        num_steps[channel_index] = constrain(num_steps[channel_index] + direction, 1, MAX_STEPS);
+        break;
+    case CVSeqCursor::CHANNEL_STEP:
+        step_index = constrain(step_index + direction, 0, MAX_STEPS - 1);
+        break;
+    case CVSeqCursor::CHANNEL_VALUE:
+        steps[channel_index][step_index].value = constrain(steps[channel_index][step_index].value + direction, 0, MAX_CV_VALUES - 1);
+        break;
+    case CVSeqCursor::CHANNEL_CLOCKS:
+        steps[channel_index][step_index].clocks = constrain(steps[channel_index][step_index].clocks + direction, 0, 31);
+        break;
+    }
+}
+
+FLASHMEM void CVSeq::OnButtonPress() {
+    if (random_menu_active) {
+        switch (random_menu_cursor.cursor_pos()) {
+            case RandomCursor::RANDOM_CH1:
+                random_channels[0] ^= true;
+                break;
+            case RandomCursor::RANDOM_CH2:
+                random_channels[1] ^= true;
+                break;
+            case RandomCursor::RANDOM_VALUES:
+                random_values();
+                random_menu_active = false;
+                break;
+            case RandomCursor::RANDOM_TRANSPOSE:
+                random_transpose();
+                random_menu_active = false;
+                break;
+            case RandomCursor::RANDOM_STEPS:
+                random_steps();
+                Reset();
+                random_menu_active = false;
+                break;
+            case RandomCursor::RANDOM_CANCEL:
+                random_menu_active = false;
+                break;
+            case RandomCursor::RANDOM_ZERO:
+                zero_steps();
+                Reset();
+                random_menu_active = false;
+                break;
+            case RandomCursor::RANDOM_INIT:
+                init_steps();
+                Reset();
+                random_menu_active = false;
+                break;
+        }
+
+        return;
+    }
+
+    if (cursor == CVSeqCursor::RESET) {
+        Reset();
+    } else if (cursor == CVSeqCursor::RANDOM) {
+        // Open random view.
+        random_menu_active = true;
+        random_menu_cursor.Init(0, RandomCursor::MAX_RANDOM_CURSOR - 1);
+        random_menu_cursor.Scroll(RandomCursor::RANDOM_CANCEL);
+    } else if (cursor == CVSeqCursor::TRANS_MODE) {
+        transpose_in_semitones ^= true;
+    } else if (cursor == CVSeqCursor::LOOP1) {
+        loops[0].enabled ^= true;
+        on_loop_toggle(0);
+    } else if (cursor == CVSeqCursor::LOOP2) {
+        loops[1].enabled ^= true;
+        on_loop_toggle(1);
+    } else if (cursor == CVSeqCursor::LOOP_FLIP) {
+        loops[0].enabled ^= true;
+        loops[1].enabled ^= true;
+        on_loop_toggle(0);
+        on_loop_toggle(1);
+    } else if (cursor == CVSeqCursor::VALUE_ZERO) {
+        cv_values[cv_value_index] = 0;
+    } else if (cursor == CVSeqCursor::VALUE_COPY) {
+        cv_value_clipboard = cv_values[cv_value_index];
+    } else if (cursor == CVSeqCursor::VALUE_PASTE) {
+        cv_values[cv_value_index] = cv_value_clipboard;
+    } else if (cursor == CVSeqCursor::CHANNEL_LOOP) {
+        // Replace whichever point is closer to step_index. Naturally
+        // extends when outside, contracts the nearer side when inside,
+        // and collapses to a single step when step_index sits on a point
+        // (in which case we move the *other* marker, since snapping the
+        // one already on this step would be a no-op).
+        const int d0 = abs((int)step_index - (int)loops[channel_index].points[0]);
+        const int d1 = abs((int)step_index - (int)loops[channel_index].points[1]);
+        const uint8_t which = (d0 == 0) ? 1 : (d1 == 0 ? 0 : (d1 < d0 ? 1 : 0));
+        loops[channel_index].points[which] = step_index;
+        on_loop_points_changed(channel_index);
+    } else if (cursor == CVSeqCursor::GENERAL_COPY_0_TO_1) {
+        copy_channel(0, 1);
+    } else if (cursor == CVSeqCursor::GENERAL_COPY_1_TO_0) {
+        copy_channel(1, 0);
+    } else {
+        if (EditMode()) {
+            cv_value_select = step_select = false;
+        }
+
+        CursorToggle();
+    }
+}
+
 
 FLASHMEM void CVSeq::View() {
   draw_interface();

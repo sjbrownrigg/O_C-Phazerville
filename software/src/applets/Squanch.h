@@ -66,9 +66,7 @@ public:
 
     }
 
-    void View() {
-        DrawInterface();
-    }
+    void View();
 
     // void OnButtonPress() { }
 
@@ -208,3 +206,8 @@ private:
 
     }
 };
+
+FLASHMEM void Squanch::View() {
+    DrawInterface();
+}
+

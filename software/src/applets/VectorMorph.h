@@ -55,9 +55,7 @@ public:
         }
     }
 
-    void View() {
-        DrawInterface();
-    }
+    void View();
 
     //void OnButtonPress() { }
 
@@ -177,3 +175,8 @@ private:
         osc[ch].SetScale(HEMISPHERE_MAX_CV);
     }
 };
+
+FLASHMEM void VectorMorph::View() {
+    DrawInterface();
+}
+

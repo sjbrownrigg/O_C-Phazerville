@@ -63,16 +63,7 @@ public:
         mixer.gain(0, 1.0f - m);
     }
 
-    void View() override {
-        if (cursor > WAVEFORM_LAST) {
-            DrawParams();
-        } else {
-            DrawWaveMenu();
-        }
-        DrawScope();
-        DrawSelector();
-        gfxDisplayInputMapEditor();
-    }
+    void View() override;
 
     void OnButtonPress() override {
         userwave_select = false;
@@ -607,3 +598,15 @@ private:
         return ext && strcasecmp(ext, ".raw") == 0;
     }
 };
+
+FLASHMEM void WTVCOApplet::View() {
+    if (cursor > WAVEFORM_LAST) {
+        DrawParams();
+    } else {
+        DrawWaveMenu();
+    }
+    DrawScope();
+    DrawSelector();
+    gfxDisplayInputMapEditor();
+}
+

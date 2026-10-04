@@ -71,58 +71,7 @@ class HandSawApplet : public HemisphereAudioApplet {
             vca_level.Push(float_to_q15(m));
         }
 
-        void View() override {
-
-            gfxPrint(1, 25, "Wave: ");
-            gfxStartCursor();
-            gfxPrint(WAVEFORM_NAMES[waveform]);
-            gfxEndCursor(cursor == WAVEFORM);
-
-            gfxPrint(1, 35, "DT: ");
-            gfxStartCursor();
-            graphics.printf("%d", detune);
-            gfxEndCursor(cursor == DETUNE);
-
-            gfxStartCursor();
-            gfxPrint(detune_cv);
-            gfxEndCursor(cursor == DETUNE_CV, false, detune_cv.InputName());
-
-            gfxPrint(1, 45, "Ph: ");
-            gfxStartCursor();
-            graphics.printf("%d", phase);
-            gfxEndCursor(cursor == PHASE);
-
-            gfxStartCursor();
-            gfxPrint(phase_cv);
-            gfxEndCursor(cursor == PHASE_CV, false, phase_cv.InputName());
-
-            gfxPrint(1, 55, "Amp:");
-            gfxStartCursor();
-            gfxPrintDb(amp);
-            gfxEndCursor(cursor == AMP);
-
-            gfxStartCursor();
-            gfxPrint(amp_cv);
-            gfxEndCursor(cursor == AMP_CV, false, amp_cv.InputName());
-
-            // Draw voice pitch and CV maps last, so cursors sit on top
-            for (int i = 0; i < 4; ++i) {
-                gfxStartCursor(1 + 15*i, 15);
-                gfxPrintTuningIndicator(pitch[i]);
-                gfxEndCursor(cursor == PITCH1 + i);
-                if (cursor == PITCH1 + i) {
-                    gfxIcon(1 + 15*i, 25, UP_ICON, true);
-                }
-            }
-            // CV mappings sit on top of the pitch row
-            for (int i = 0; i < 4; ++i) {
-                gfxStartCursor(10 + 15*i, 15);
-                gfxPrint(pitch_cv[i]);
-                gfxEndCursor(cursor == PITCH_CV1 + i, false, pitch_cv[i].InputName());
-            }
-
-            gfxDisplayInputMapEditor();
-        }
+        void View() override;
 
     #define SWARM_OSC_PARAMS \
         pitch[0], pitch[1], pitch[2], pitch[3]
@@ -314,3 +263,57 @@ class HandSawApplet : public HemisphereAudioApplet {
         InterpolatingStream<>   vca_level;
         AudioMixer<2>           final_out;
 };
+
+FLASHMEM void HandSawApplet::View() {
+
+    gfxPrint(1, 25, "Wave: ");
+    gfxStartCursor();
+    gfxPrint(WAVEFORM_NAMES[waveform]);
+    gfxEndCursor(cursor == WAVEFORM);
+
+    gfxPrint(1, 35, "DT: ");
+    gfxStartCursor();
+    graphics.printf("%d", detune);
+    gfxEndCursor(cursor == DETUNE);
+
+    gfxStartCursor();
+    gfxPrint(detune_cv);
+    gfxEndCursor(cursor == DETUNE_CV, false, detune_cv.InputName());
+
+    gfxPrint(1, 45, "Ph: ");
+    gfxStartCursor();
+    graphics.printf("%d", phase);
+    gfxEndCursor(cursor == PHASE);
+
+    gfxStartCursor();
+    gfxPrint(phase_cv);
+    gfxEndCursor(cursor == PHASE_CV, false, phase_cv.InputName());
+
+    gfxPrint(1, 55, "Amp:");
+    gfxStartCursor();
+    gfxPrintDb(amp);
+    gfxEndCursor(cursor == AMP);
+
+    gfxStartCursor();
+    gfxPrint(amp_cv);
+    gfxEndCursor(cursor == AMP_CV, false, amp_cv.InputName());
+
+    // Draw voice pitch and CV maps last, so cursors sit on top
+    for (int i = 0; i < 4; ++i) {
+        gfxStartCursor(1 + 15*i, 15);
+        gfxPrintTuningIndicator(pitch[i]);
+        gfxEndCursor(cursor == PITCH1 + i);
+        if (cursor == PITCH1 + i) {
+            gfxIcon(1 + 15*i, 25, UP_ICON, true);
+        }
+    }
+    // CV mappings sit on top of the pitch row
+    for (int i = 0; i < 4; ++i) {
+        gfxStartCursor(10 + 15*i, 15);
+        gfxPrint(pitch_cv[i]);
+        gfxEndCursor(cursor == PITCH_CV1 + i, false, pitch_cv[i].InputName());
+    }
+
+    gfxDisplayInputMapEditor();
+}
+

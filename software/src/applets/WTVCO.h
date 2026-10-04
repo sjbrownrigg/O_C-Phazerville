@@ -169,24 +169,7 @@ public:
         ] * MAX_AMPLITUDE / 127) / 100);
     }
 
-    void View() {
-        switch (menu_page) {
-            case MENU_WAVETABLES:
-                DrawWaveMenu();
-                DrawWaveForm();
-                break;
-            case MENU_PARAMS:
-                DrawParamMenu();
-                DrawParams();
-                break;
-            case MENU_MOD_DEST:
-                DrawCVDestMenu();
-                DrawCVDestinations();
-                break;
-            default: break;
-        }
-        DrawSelector();
-    }
+    void View();
 
     void AuxButton() {
         switch(menu_page) {
@@ -718,3 +701,23 @@ private:
     // add more wave generators here, add a corresponding key in enum WaveForms{}, then call generator function in GenerateWaveTable(){}
 
 };
+
+FLASHMEM void WTVCO::View() {
+    switch (menu_page) {
+        case MENU_WAVETABLES:
+            DrawWaveMenu();
+            DrawWaveForm();
+            break;
+        case MENU_PARAMS:
+            DrawParamMenu();
+            DrawParams();
+            break;
+        case MENU_MOD_DEST:
+            DrawCVDestMenu();
+            DrawCVDestinations();
+            break;
+        default: break;
+    }
+    DrawSelector();
+}
+

@@ -105,9 +105,7 @@ public:
         }
     }
 
-    void View() {
-        DrawInterface();
-    }
+    void View();
 
     void OnButtonPress() {
         if (RE_ZAP == cursor) {
@@ -254,3 +252,8 @@ private:
     }
 
 };
+
+FLASHMEM void DivSeq::View() {
+    DrawInterface();
+}
+

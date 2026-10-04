@@ -129,9 +129,7 @@ public:
 
     }
 
-    void View() {
-        DrawInterface();
-    }
+    void View();
 
     //void OnButtonPress() { }
 
@@ -369,3 +367,8 @@ private:
         step = 0;
     }
 };
+
+FLASHMEM void DrumMap::View() {
+    DrawInterface();
+}
+

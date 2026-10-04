@@ -91,10 +91,7 @@ public:
         }
     }
 
-    void View() {
-        DrawSelector();
-        DrawGrid();
-    }
+    void View();
 
     void OnButtonPress() {
         if (cursor == SHUFFLE && !EditMode()) // special case toggle
@@ -266,3 +263,9 @@ private:
         Out(0, MIDIQuantizer::CV(note + 36, transpose));
     }
 };
+
+FLASHMEM void Carpeggio::View() {
+    DrawSelector();
+    DrawGrid();
+}
+

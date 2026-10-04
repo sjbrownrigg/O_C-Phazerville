@@ -127,10 +127,7 @@ public:
         }
     }
 
-    void View() {
-        DrawSelector();
-        DrawIndicator();
-    }
+    void View();
 
     void OnButtonPress() {
       if (CLKPASSTHRU == cursor)
@@ -328,3 +325,9 @@ private:
         if (div == -1) div = 1; // Must be moving up to hit -1 (see previous line)
     }
 };
+
+FLASHMEM void Burst::View() {
+    DrawSelector();
+    DrawIndicator();
+}
+

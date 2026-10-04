@@ -269,58 +269,61 @@ private:
         }
     }
 
-    void DrawEditor() {
-        const int spacing = 16;
-        const int pad_left = 5;
+    void DrawEditor();
+};
 
-        if (cursor < CV_DEST1 || cursor > CV_DEST2) {
-          gfxIcon(pad_left + 0 * spacing, 15, LENGTH_ICON);
-        }
-        gfxIcon(pad_left + 1 * spacing, 15, gate_mode ? GATE_ICON : PULSES_ICON);
-        gfxIcon(pad_left + 2 * spacing, 15, ROTATE_ICON);
-        gfxIcon(pad_left + 3 * spacing, 15, OFFSET_ICON);
+FLASHMEM void EuclidX::DrawEditor() {
+    const int spacing = 16;
+    const int pad_left = 5;
 
-        int y = 15;
-        ForEachChannel (ch) {
-            y += 10;
-            gfxPrint(0 * spacing + pad(10, actual_length[ch]), y, actual_length[ch]);
-            gfxPrint(1 * spacing + pad(10, actual_beats[ch]), y, actual_beats[ch]);
-            gfxPrint(2 * spacing + pad(10, actual_offset[ch]), y, actual_offset[ch]);
-            gfxPrint(3 * spacing + pad(10, actual_padding[ch]), y, actual_padding[ch]);
+    if (cursor < CV_DEST1 || cursor > CV_DEST2) {
+      gfxIcon(pad_left + 0 * spacing, 15, LENGTH_ICON);
+    }
+    gfxIcon(pad_left + 1 * spacing, 15, gate_mode ? GATE_ICON : PULSES_ICON);
+    gfxIcon(pad_left + 2 * spacing, 15, ROTATE_ICON);
+    gfxIcon(pad_left + 3 * spacing, 15, OFFSET_ICON);
 
-            // CV assignment indicators
-            ForEachChannel(ch_dest) {
-                int ff = cv_dest[ch_dest] - LENGTH2*ch;
-                if (ff >= 0 && ff < LENGTH2)
-                    gfxBitmap(13 + ff * spacing, y, 3, ch_dest?SUB_TWO:SUP_ONE);
-            }
-        }
+    int y = 15;
+    ForEachChannel (ch) {
+        y += 10;
+        gfxPrint(0 * spacing + pad(10, actual_length[ch]), y, actual_length[ch]);
+        gfxPrint(1 * spacing + pad(10, actual_beats[ch]), y, actual_beats[ch]);
+        gfxPrint(2 * spacing + pad(10, actual_offset[ch]), y, actual_offset[ch]);
+        gfxPrint(3 * spacing + pad(10, actual_padding[ch]), y, actual_padding[ch]);
 
-        int ch = cursor < LENGTH2 ? 0 : 1;
-        int f = cursor - ch * LENGTH2;
-        y = 33;
-        switch (cursor) {
-        case LENGTH2:
-        case BEATS2:
-        case OFFSET2:
-        case PADDING2:
-            y += 10;
-        case LENGTH1:
-        case BEATS1:
-        case OFFSET1:
-        case PADDING1:
-            gfxCursor(f * spacing, y, 13, cv_labels[cursor]);
-            break;
-
-        case CV_DEST1:
-        case CV_DEST2:
-            gfxBitmap(0, 13 + (cursor - CV_DEST1)*5, 8, CV_ICON);
-            gfxBitmap(8, 15, 3, (cursor - CV_DEST1)? SUB_TWO : SUP_ONE);
-            gfxCursor(0, 19 + (cursor - CV_DEST1)*5, 11, 7, "CV Dest");
-            break;
-        case GATE_MODE:
-            gfxCursor(pad_left + 1 * spacing - 1, 23, 10, gate_mode? "Gates":"Triggers");
-            break;
+        // CV assignment indicators
+        ForEachChannel(ch_dest) {
+            int ff = cv_dest[ch_dest] - LENGTH2*ch;
+            if (ff >= 0 && ff < LENGTH2)
+                gfxBitmap(13 + ff * spacing, y, 3, ch_dest?SUB_TWO:SUP_ONE);
         }
     }
-};
+
+    int ch = cursor < LENGTH2 ? 0 : 1;
+    int f = cursor - ch * LENGTH2;
+    y = 33;
+    switch (cursor) {
+    case LENGTH2:
+    case BEATS2:
+    case OFFSET2:
+    case PADDING2:
+        y += 10;
+    case LENGTH1:
+    case BEATS1:
+    case OFFSET1:
+    case PADDING1:
+        gfxCursor(f * spacing, y, 13, cv_labels[cursor]);
+        break;
+
+    case CV_DEST1:
+    case CV_DEST2:
+        gfxBitmap(0, 13 + (cursor - CV_DEST1)*5, 8, CV_ICON);
+        gfxBitmap(8, 15, 3, (cursor - CV_DEST1)? SUB_TWO : SUP_ONE);
+        gfxCursor(0, 19 + (cursor - CV_DEST1)*5, 11, 7, "CV Dest");
+        break;
+    case GATE_MODE:
+        gfxCursor(pad_left + 1 * spacing - 1, 23, 10, gate_mode? "Gates":"Triggers");
+        break;
+    }
+}
+

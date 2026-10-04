@@ -42,50 +42,7 @@ public:
     dry_wet_mixer.gain(1, 1.0f - m);
   }
 
-  void View() override {
-    if (!phaser) {
-      gfxPrint(1, 15, "Out Of RAM !!!");
-      return;
-    };
-    gfxPrint(1, 15, "Depth:");
-    gfxStartCursor();
-    graphics.printf("%3d%%", depth);
-    gfxEndCursor(cursor == DEPTH);
-
-    gfxStartCursor();
-    gfxPrint(depth_cv);
-    gfxEndCursor(cursor == DEPTH_CV, false, depth_cv.InputName());
-
-    gfxPrint(1, 25, "Feed:");
-    gfxStartCursor();
-    graphics.printf("%3d%%", feedback);
-    gfxEndCursor(cursor == FEED);
-
-    gfxStartCursor();
-    gfxPrint(feedback_cv);
-    gfxEndCursor(cursor == FEED_CV, false, feedback_cv.InputName());
-
-    gfxPrint(1, 35, "Hz:");
-    gfxStartCursor();
-    int rmod = rate * rate;
-    graphics.printf("%2d.%02d", rmod / 100, rmod % 100);
-    gfxEndCursor(cursor == RATE);
-
-    gfxStartCursor();
-    gfxPrint(rate_cv);
-    gfxEndCursor(cursor == RATE_CV, false, rate_cv.InputName());
-
-    gfxPrint(1, 45, "Mix:");
-    gfxStartCursor();
-    graphics.printf("%3d%%", mix);
-    gfxEndCursor(cursor == MIX);
-
-    gfxStartCursor();
-    gfxPrint(mix_cv);
-    gfxEndCursor(cursor == MIX_CV, false, mix_cv.InputName());
-
-    gfxDisplayInputMapEditor();
-  }
+  void View() override;
 
   void OnDataRequest(std::array<uint64_t, CONFIG_SIZE>& data) override {
     data[0] = PackPackables(mix, depth, feedback, rate);
@@ -187,3 +144,49 @@ private:
   CVInputMap feedback_cv;
   CVInputMap rate_cv;
 };
+
+FLASHMEM void PhazerApplet::View() {
+  if (!phaser) {
+    gfxPrint(1, 15, "Out Of RAM !!!");
+    return;
+  };
+  gfxPrint(1, 15, "Depth:");
+  gfxStartCursor();
+  graphics.printf("%3d%%", depth);
+  gfxEndCursor(cursor == DEPTH);
+
+  gfxStartCursor();
+  gfxPrint(depth_cv);
+  gfxEndCursor(cursor == DEPTH_CV, false, depth_cv.InputName());
+
+  gfxPrint(1, 25, "Feed:");
+  gfxStartCursor();
+  graphics.printf("%3d%%", feedback);
+  gfxEndCursor(cursor == FEED);
+
+  gfxStartCursor();
+  gfxPrint(feedback_cv);
+  gfxEndCursor(cursor == FEED_CV, false, feedback_cv.InputName());
+
+  gfxPrint(1, 35, "Hz:");
+  gfxStartCursor();
+  int rmod = rate * rate;
+  graphics.printf("%2d.%02d", rmod / 100, rmod % 100);
+  gfxEndCursor(cursor == RATE);
+
+  gfxStartCursor();
+  gfxPrint(rate_cv);
+  gfxEndCursor(cursor == RATE_CV, false, rate_cv.InputName());
+
+  gfxPrint(1, 45, "Mix:");
+  gfxStartCursor();
+  graphics.printf("%3d%%", mix);
+  gfxEndCursor(cursor == MIX);
+
+  gfxStartCursor();
+  gfxPrint(mix_cv);
+  gfxEndCursor(cursor == MIX_CV, false, mix_cv.InputName());
+
+  gfxDisplayInputMapEditor();
+}
+

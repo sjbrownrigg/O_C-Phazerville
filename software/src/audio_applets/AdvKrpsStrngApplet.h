@@ -81,66 +81,7 @@ public:
 
   // --- View (64×64 display) ----------------------------------------------
 
-  void View() override {
-    // Row 1 — Pitch (two editable cursors + CV source)
-    gfxStartCursor(1, 15);
-    gfxPrintTuningIndicator(pitch);          // note name + tuning bar
-    gfxEndCursor(cursor == PITCH);
-
-    gfxStartCursor(11, 15);
-    gfxPrintPitchHz(pitch);                  // e.g. " 261.6Hz"
-    gfxEndCursor(cursor == PITCH_FINE);
-
-    gfxStartCursor();
-    gfxPrint(pitch_cv);
-    gfxEndCursor(cursor == PITCH_CV, false, pitch_cv.InputName());
-
-    // Row 2 — Trigger source
-    gfxPrint(1, 25, "Trg:");
-    gfxStartCursor(25, 25);
-    gfxPrint(trig_cv);
-    gfxEndCursor(cursor == TRIG_CV, false, trig_cv.InputName(), "Trigger");
-
-    // Row 3 — Decay
-    gfxPrint(1, 35, "Dcy:");
-    gfxStartCursor(25, 35);
-    graphics.printf("%3d", decay);
-    gfxEndCursor(cursor == DECAY);
-    gfxStartCursor();
-    gfxPrint(decay_cv);
-    gfxEndCursor(cursor == DECAY_CV, false, decay_cv.InputName());
-
-    // Row 4 — Brightness
-    gfxPrint(1, 45, "Brt:");
-    gfxStartCursor(25, 45);
-    graphics.printf("%3d", brightness);
-    gfxEndCursor(cursor == BRIGHT);
-    gfxStartCursor();
-    gfxPrint(brightness_cv);
-    gfxEndCursor(cursor == BRIGHT_CV, false, brightness_cv.InputName());
-
-    // Row 5 — context-sensitive: Body (while editing Pitch/Trig/Decay/Brt/Body)
-    //                           or Mix (while editing Mix)
-    if (cursor <= BODY_CV) {
-      gfxPrint(1, 55, "Bdy:");
-      gfxStartCursor(25, 55);
-      graphics.printf("%3d", body);
-      gfxEndCursor(cursor == BODY);
-      gfxStartCursor();
-      gfxPrint(body_cv);
-      gfxEndCursor(cursor == BODY_CV, false, body_cv.InputName());
-    } else {
-      gfxPrint(1, 55, "Mix:");
-      gfxStartCursor(25, 55);
-      graphics.printf("%3d%%", mix);
-      gfxEndCursor(cursor == MIX);
-      gfxStartCursor();
-      gfxPrint(mix_cv);
-      gfxEndCursor(cursor == MIX_CV, false, mix_cv.InputName());
-    }
-
-    gfxDisplayInputMapEditor();
-  }
+  void View() override;
 
   // --- Button / encoder --------------------------------------------------
 
@@ -284,3 +225,65 @@ private:
   AudioSynthAdvancedKarplus     synth;          // KS engine
   AudioMixer<2>                 output_mixer;   // dry/wet blend
 };
+
+FLASHMEM void AdvKrpsStrngApplet::View() {
+  // Row 1 — Pitch (two editable cursors + CV source)
+  gfxStartCursor(1, 15);
+  gfxPrintTuningIndicator(pitch);          // note name + tuning bar
+  gfxEndCursor(cursor == PITCH);
+
+  gfxStartCursor(11, 15);
+  gfxPrintPitchHz(pitch);                  // e.g. " 261.6Hz"
+  gfxEndCursor(cursor == PITCH_FINE);
+
+  gfxStartCursor();
+  gfxPrint(pitch_cv);
+  gfxEndCursor(cursor == PITCH_CV, false, pitch_cv.InputName());
+
+  // Row 2 — Trigger source
+  gfxPrint(1, 25, "Trg:");
+  gfxStartCursor(25, 25);
+  gfxPrint(trig_cv);
+  gfxEndCursor(cursor == TRIG_CV, false, trig_cv.InputName(), "Trigger");
+
+  // Row 3 — Decay
+  gfxPrint(1, 35, "Dcy:");
+  gfxStartCursor(25, 35);
+  graphics.printf("%3d", decay);
+  gfxEndCursor(cursor == DECAY);
+  gfxStartCursor();
+  gfxPrint(decay_cv);
+  gfxEndCursor(cursor == DECAY_CV, false, decay_cv.InputName());
+
+  // Row 4 — Brightness
+  gfxPrint(1, 45, "Brt:");
+  gfxStartCursor(25, 45);
+  graphics.printf("%3d", brightness);
+  gfxEndCursor(cursor == BRIGHT);
+  gfxStartCursor();
+  gfxPrint(brightness_cv);
+  gfxEndCursor(cursor == BRIGHT_CV, false, brightness_cv.InputName());
+
+  // Row 5 — context-sensitive: Body (while editing Pitch/Trig/Decay/Brt/Body)
+  //                           or Mix (while editing Mix)
+  if (cursor <= BODY_CV) {
+    gfxPrint(1, 55, "Bdy:");
+    gfxStartCursor(25, 55);
+    graphics.printf("%3d", body);
+    gfxEndCursor(cursor == BODY);
+    gfxStartCursor();
+    gfxPrint(body_cv);
+    gfxEndCursor(cursor == BODY_CV, false, body_cv.InputName());
+  } else {
+    gfxPrint(1, 55, "Mix:");
+    gfxStartCursor(25, 55);
+    graphics.printf("%3d%%", mix);
+    gfxEndCursor(cursor == MIX);
+    gfxStartCursor();
+    gfxPrint(mix_cv);
+    gfxEndCursor(cursor == MIX_CV, false, mix_cv.InputName());
+  }
+
+  gfxDisplayInputMapEditor();
+}
+

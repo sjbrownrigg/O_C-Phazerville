@@ -92,76 +92,7 @@ public:
     }
   }
 
-  void View() {
-    gfxPrint(1, 15, "Q"); gfxPrint(qselect_mod + 1);
-    gfxPrint(15, 15, OC::scale_names_short[HS::GetScale(qselect_mod)]);
-    gfxPrint(45, 15, OC::Strings::note_names_unpadded[HS::GetRootNote(qselect_mod)]);
-    if (cursor == QUANT)
-      gfxSpicyCursor(1, 23, 13);
-
-    if (stepmode) {
-      gfxPrint(8, 25, "[step]");
-    } else {
-      if (show_encoder) {
-        gfxPrint(8 + pad(100, spacing), 25, spacing);
-        --show_encoder;
-      } else {
-        gfxPrint(8 + pad(100, spacing_mod), 25, spacing_mod);
-        if (spacing_mod != spacing) gfxIcon(1, 23, CV_ICON);
-      }
-      gfxPrint(28, 25, "ms");
-    }
-    if (cursor == SPACING)
-      gfxSpicyCursor(1, 33, 27);
-
-    gfxIcon(56, qmod? 15 : 25, LEFT_ICON);
-
-    int num_notes = OC::Scales::GetScale(HS::GetScale(qselect_mod)).num_notes;
-    const int cursor_width = 9;
-    const int col_width = cursor_width + 2;
-    const int top = 35;
-    const int num_top = top + 10;
-    for (int i = 0; i < length; i++) {
-      int col = i;
-      int offset = intervals[i] % num_notes;
-      int octave = intervals[i] / num_notes;
-      if (offset < 0) {
-        offset += num_notes;
-        octave -= 1;
-      }
-      const uint8_t *octave_mark = octave < 0
-        ? DOWN_ARROWS_BTT + (-octave - 1) * 6
-        : UP_ARROWS_BTT + (octave - 1) * 6;
-      int disp_offset = offset + 1;
-      gfxBitmap(col * col_width, num_top, 8, TEENS_8X8 + disp_offset * 8);
-
-      if (octave != 0)
-        gfxBitmap(col * col_width + 1, top + 2, 6, octave_mark);
-      if (cursor == INTERVAL_START + i) {
-        gfxCursor(col * col_width, num_top + 8, cursor_width);
-      }
-
-      int quant_note = disp + (intervals[i] % num_notes);
-      int32_t pitch = HS::QuantizerLookup(qselect_mod, quant_note);
-      int semitone = MIDIQuantizer::NoteNumber(pitch) % 12;
-      gfxBitmap(col_width * i, 55, 8, NOTE_NAMES + semitone * 8);
-
-      // TODO: Flip indicator on reverse strums, though tbh it looks fine as is
-      if (index - inc == i && inc != 0) {
-        int c = inc < 0 ? countdown : last_note_dur - countdown;
-        int p = Proportion(c, last_note_dur, col_width);
-        int x = col * col_width + p;
-        CONSTRAIN(x, 0, 63);
-        int w = col_width - p;
-        CONSTRAIN(w, 0, 63 - x);
-        int y = top;
-        gfxInvert(x, y, w, 28);
-      }
-    }
-    if (cursor == LENGTH) {
-      gfxSpicyCursor(0, num_top + 8, min(6 * col_width, 63));
-    }
-  }
+  void View();
 
   //void OnButtonPress() { }
 
@@ -273,4 +204,76 @@ private:
   int disp = 64;
 
 };
+
+FLASHMEM void Strum::View() {
+  gfxPrint(1, 15, "Q"); gfxPrint(qselect_mod + 1);
+  gfxPrint(15, 15, OC::scale_names_short[HS::GetScale(qselect_mod)]);
+  gfxPrint(45, 15, OC::Strings::note_names_unpadded[HS::GetRootNote(qselect_mod)]);
+  if (cursor == QUANT)
+    gfxSpicyCursor(1, 23, 13);
+
+  if (stepmode) {
+    gfxPrint(8, 25, "[step]");
+  } else {
+    if (show_encoder) {
+      gfxPrint(8 + pad(100, spacing), 25, spacing);
+      --show_encoder;
+    } else {
+      gfxPrint(8 + pad(100, spacing_mod), 25, spacing_mod);
+      if (spacing_mod != spacing) gfxIcon(1, 23, CV_ICON);
+    }
+    gfxPrint(28, 25, "ms");
+  }
+  if (cursor == SPACING)
+    gfxSpicyCursor(1, 33, 27);
+
+  gfxIcon(56, qmod? 15 : 25, LEFT_ICON);
+
+  int num_notes = OC::Scales::GetScale(HS::GetScale(qselect_mod)).num_notes;
+  const int cursor_width = 9;
+  const int col_width = cursor_width + 2;
+  const int top = 35;
+  const int num_top = top + 10;
+  for (int i = 0; i < length; i++) {
+    int col = i;
+    int offset = intervals[i] % num_notes;
+    int octave = intervals[i] / num_notes;
+    if (offset < 0) {
+      offset += num_notes;
+      octave -= 1;
+    }
+    const uint8_t *octave_mark = octave < 0
+      ? DOWN_ARROWS_BTT + (-octave - 1) * 6
+      : UP_ARROWS_BTT + (octave - 1) * 6;
+    int disp_offset = offset + 1;
+    gfxBitmap(col * col_width, num_top, 8, TEENS_8X8 + disp_offset * 8);
+
+    if (octave != 0)
+      gfxBitmap(col * col_width + 1, top + 2, 6, octave_mark);
+    if (cursor == INTERVAL_START + i) {
+      gfxCursor(col * col_width, num_top + 8, cursor_width);
+    }
+
+    int quant_note = disp + (intervals[i] % num_notes);
+    int32_t pitch = HS::QuantizerLookup(qselect_mod, quant_note);
+    int semitone = MIDIQuantizer::NoteNumber(pitch) % 12;
+    gfxBitmap(col_width * i, 55, 8, NOTE_NAMES + semitone * 8);
+
+    // TODO: Flip indicator on reverse strums, though tbh it looks fine as is
+    if (index - inc == i && inc != 0) {
+      int c = inc < 0 ? countdown : last_note_dur - countdown;
+      int p = Proportion(c, last_note_dur, col_width);
+      int x = col * col_width + p;
+      CONSTRAIN(x, 0, 63);
+      int w = col_width - p;
+      CONSTRAIN(w, 0, 63 - x);
+      int y = top;
+      gfxInvert(x, y, w, 28);
+    }
+  }
+  if (cursor == LENGTH) {
+    gfxSpicyCursor(0, num_top + 8, min(6 * col_width, 63));
+  }
+}
+
 

@@ -93,10 +93,7 @@ public:
 
     }
 
-    void View() {
-        DrawIndicator();
-        DrawSelector();
-    }
+    void View();
 
     //void OnButtonPress() { }
 
@@ -211,3 +208,9 @@ private:
         gfxLine((7 - outmode[1]) * 6 + 13, 60, (7 - outmode[1]) * 6 + 17, 60);
     }
 };
+
+FLASHMEM void Cumulus::View() {
+    DrawIndicator();
+    DrawSelector();
+}
+

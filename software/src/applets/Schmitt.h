@@ -46,9 +46,7 @@ public:
         if (--gate_countdown < -SCHMITT_FLASH_SPEED) gate_countdown = SCHMITT_FLASH_SPEED;
     }
 
-    void View() {
-        DrawInterface();
-    }
+    void View();
 
     // No controls
     void OnButtonPress() {
@@ -152,3 +150,8 @@ private:
         }
     }
 };
+
+FLASHMEM void Schmitt::View() {
+    DrawInterface();
+}
+

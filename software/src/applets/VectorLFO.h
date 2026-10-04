@@ -94,9 +94,7 @@ public:
         }
     }
 
-    void View() {
-        DrawInterface();
-    }
+    void View();
 
     void AuxButton() {
       modshape = cursor & 1;
@@ -247,3 +245,8 @@ private:
         }
     }
 };
+
+FLASHMEM void VectorLFO::View() {
+    DrawInterface();
+}
+

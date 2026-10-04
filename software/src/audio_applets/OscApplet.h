@@ -62,65 +62,7 @@ public:
     mixer.gain(0, 1.0f - m);
   }
 
-  void View() override {
-    gfxStartCursor(1, 15);
-    gfxPrint(WAVEFORM_NAMES[waveform]);
-    gfxEndCursor(cursor == WAVEFORM);
-
-    if (WAVEFORMS[waveform] != WAVEFORM_SINE && WAVEFORMS[waveform] != WAVEFORM_BANDLIMIT_SAWTOOTH) {
-      gfxStartCursor(1 + 3 * 6 + 2 * 6, 15);
-      graphics.printf("%3d%%", pw);
-      gfxEndCursor(cursor == PW);
-
-      gfxStartCursor();
-      gfxPrint(pw_cv);
-      gfxEndCursor(cursor == PW_CV, false, pw_cv.InputName());
-    }
-
-    gfxStartCursor(1, 25);
-    gfxPrintTuningIndicator(pitch);
-    gfxEndCursor(cursor == OCTAVE);
-    gfxStartCursor(11, 25);
-    gfxPrintPitchHz(pitch);
-    gfxEndCursor(cursor == PITCH);
-
-    gfxStartCursor();
-    gfxPrint(pitch_cv);
-    gfxEndCursor(cursor == PITCH_CV, false, pitch_cv.InputName());
-
-    gfxStartCursor(1, 35);
-    gfxPrint(MOD_TYPE_NAMES[mod_type]);
-    gfxEndCursor(cursor == MOD_TYPE);
-    gfxPrint(":  ");
-
-    gfxStartCursor();
-    graphics.printf("%1d.%02d", SPLIT_INT_DEC(mod_depth * 0.01f, 100));
-    gfxEndCursor(cursor == MOD_DEPTH);
-
-    gfxStartCursor();
-    gfxPrint(mod_cv);
-    gfxEndCursor(cursor == MOD_CV, false, mod_cv.InputName());
-
-    gfxPrint(1, 45, "Lvl:");
-    gfxStartCursor();
-    graphics.printf("%3ddB", level);
-    gfxEndCursor(cursor == LEVEL);
-
-    gfxStartCursor();
-    gfxPrint(level_cv);
-    gfxEndCursor(cursor == LEVEL_CV, false, level_cv.InputName());
-
-    gfxPrint(1, 55, "Mix: ");
-    gfxStartCursor();
-    graphics.printf("%3d%%", mix);
-    gfxEndCursor(cursor == MIX);
-
-    gfxStartCursor();
-    gfxPrint(mix_cv);
-    gfxEndCursor(cursor == MIX_CV, false, mix_cv.InputName());
-
-    gfxDisplayInputMapEditor();
-  }
+  void View() override;
 
 #define OSC_PARAMS \
   pw, pitch, mod_depth, level, mix, pack<2>(waveform), pack<2>(mod_type)
@@ -295,3 +237,64 @@ private:
   AudioVCA vca;
   AudioMixer<2> mixer;
 };
+
+FLASHMEM void OscApplet::View() {
+  gfxStartCursor(1, 15);
+  gfxPrint(WAVEFORM_NAMES[waveform]);
+  gfxEndCursor(cursor == WAVEFORM);
+
+  if (WAVEFORMS[waveform] != WAVEFORM_SINE && WAVEFORMS[waveform] != WAVEFORM_BANDLIMIT_SAWTOOTH) {
+    gfxStartCursor(1 + 3 * 6 + 2 * 6, 15);
+    graphics.printf("%3d%%", pw);
+    gfxEndCursor(cursor == PW);
+
+    gfxStartCursor();
+    gfxPrint(pw_cv);
+    gfxEndCursor(cursor == PW_CV, false, pw_cv.InputName());
+  }
+
+  gfxStartCursor(1, 25);
+  gfxPrintTuningIndicator(pitch);
+  gfxEndCursor(cursor == OCTAVE);
+  gfxStartCursor(11, 25);
+  gfxPrintPitchHz(pitch);
+  gfxEndCursor(cursor == PITCH);
+
+  gfxStartCursor();
+  gfxPrint(pitch_cv);
+  gfxEndCursor(cursor == PITCH_CV, false, pitch_cv.InputName());
+
+  gfxStartCursor(1, 35);
+  gfxPrint(MOD_TYPE_NAMES[mod_type]);
+  gfxEndCursor(cursor == MOD_TYPE);
+  gfxPrint(":  ");
+
+  gfxStartCursor();
+  graphics.printf("%1d.%02d", SPLIT_INT_DEC(mod_depth * 0.01f, 100));
+  gfxEndCursor(cursor == MOD_DEPTH);
+
+  gfxStartCursor();
+  gfxPrint(mod_cv);
+  gfxEndCursor(cursor == MOD_CV, false, mod_cv.InputName());
+
+  gfxPrint(1, 45, "Lvl:");
+  gfxStartCursor();
+  graphics.printf("%3ddB", level);
+  gfxEndCursor(cursor == LEVEL);
+
+  gfxStartCursor();
+  gfxPrint(level_cv);
+  gfxEndCursor(cursor == LEVEL_CV, false, level_cv.InputName());
+
+  gfxPrint(1, 55, "Mix: ");
+  gfxStartCursor();
+  graphics.printf("%3d%%", mix);
+  gfxEndCursor(cursor == MIX);
+
+  gfxStartCursor();
+  gfxPrint(mix_cv);
+  gfxEndCursor(cursor == MIX_CV, false, mix_cv.InputName());
+
+  gfxDisplayInputMapEditor();
+}
+

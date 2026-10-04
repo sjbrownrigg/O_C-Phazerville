@@ -205,45 +205,10 @@ public:
   DrumTrack preset_tracks[NUM_PRESETS][4];
   GridGlobals preset_globals[NUM_PRESETS];
 
-  FLASHMEM void Start() {
-    // Sentinel: freshly-constructed app has all-zero settings (invalid Length).
-    // Seed defaults once; InitDefaults() applies every declared default.
-    if (!tracks[0].length()) {
-      static const uint8_t def_len[4]   = {16, 16, 16, 13};
-      static const uint8_t def_beats[4] = { 4,  2,  8,  5};
-      static const uint8_t def_rot[4]   = { 0,  4,  0,  0};
-      static const uint8_t def_part[4]  = { 0,  1,  2,  2}; // BD SD HH HH
-      globals.InitDefaults();
-      for (int i = 0; i < 4; ++i) {
-        tracks[i].InitDefaults();
-        tracks[i].apply_value(TRACK_SETTING_LENGTH, def_len[i]);
-        tracks[i].apply_value(TRACK_SETTING_BEATS, def_beats[i]);
-        tracks[i].apply_value(TRACK_SETTING_ROTATION, def_rot[i]);
-        tracks[i].apply_value(TRACK_SETTING_PART, def_part[i]);
-      }
-      // Seed every preset slot with the default kit.
-      for (int p = 0; p < NUM_PRESETS; ++p) {
-        globals.CopySettingsTo(preset_globals[p]);
-        for (int i = 0; i < 4; ++i) tracks[i].CopySettingsTo(preset_tracks[p][i]);
-      }
-    }
-    for (auto &t : tracks) t.Regenerate();
-  }
+  void Start();
 
-  FLASHMEM void SaveSlot(int slot) {
-    globals.CopySettingsTo(preset_globals[slot]);
-    for (int i = 0; i < 4; ++i) tracks[i].CopySettingsTo(preset_tracks[slot][i]);
-  }
-  FLASHMEM void LoadSlot(int slot) {
-    preset_globals[slot].CopySettingsTo(globals);
-    for (int i = 0; i < 4; ++i) {
-      preset_tracks[slot][i].CopySettingsTo(tracks[i]);
-      tracks[i].Regenerate();
-    }
-    OnModeChanged();
-    CancelEdit();
-    cursor = 0;
-  }
+  void SaveSlot(int slot);
+  void LoadSlot(int slot);
 
   void Resume() {}
 
@@ -320,111 +285,25 @@ public:
     }
   }
 
-  FLASHMEM void View() const {
-    gfxHeader("EuclidKit");
-    gfxPrint(92, 1, kModeAbbrev[globals.mode()]);
-    gfxIcon(118, 1, GAUGE_ICON);
-    if (PageOf(CurrentField()) != PAGE_MAIN) gfxInvert(117, 0, 10, 9);
-
-    for (int i = 0; i < 4; ++i) DrawTrackRow(i);
-    if (preset_mode) DrawPresetBar();
-    else DrawParams();
-  }
+  void View() const;
 
   // -- Buttons --------------------------------------------------------------
 
-  FLASHMEM void OnUpButtonLongPress() { // toggle preset screen
-    preset_mode = !preset_mode;
-    if (preset_mode) slot_cursor = active_slot;
-    CancelEdit();
-    ResetCursor();
-  }
-  FLASHMEM void OnUpButtonPress() { // preset screen: UP = Save
-    if (preset_mode) {
-      SaveSlot(slot_cursor);
-      active_slot = slot_cursor;
-      save_flash = kSaveFlashFrames;
-      return;
-    }
-    focus = (focus + 3) & 3;
-    ResetCursor();
-  }
-  FLASHMEM void OnDownButtonPress() { // preset screen: DOWN = Load
-    if (preset_mode) { LoadSlot(slot_cursor); active_slot = slot_cursor; return; }
-    focus = (focus + 1) & 3;
-    ResetCursor();
-  }
-  FLASHMEM void OnDownButtonLongPress() { // clear manual overrides (Euclidean, not preset)
-    if (preset_mode || IsGrids()) return;
-    tracks[focus].ClearManual();
-  }
+  void OnUpButtonLongPress();
+  void OnUpButtonPress();
+  void OnDownButtonPress();
+  void OnDownButtonLongPress();
 
-  FLASHMEM void OnLeftButtonPress() {
-    if (preset_mode) { preset_mode = false; return; } // encoder press exits
-    // On the calibration page, press captures the current input into the
-    // selected endpoint (learn) rather than toggling edit mode.
-    Field f = CurrentField();
-    if (f == F_CAL_LO) { cv_cal_low = In(focus); ResetCursor(); return; }
-    if (f == F_CAL_HI) { cv_cal_high = In(focus); ResetCursor(); return; }
-    CursorToggle();
-  }
-  FLASHMEM void OnLeftButtonLongPress() {
-    if (preset_mode) return;
-    tracks[focus].apply_value(TRACK_SETTING_MUTE, !tracks[focus].mute());
-  }
+  void OnLeftButtonPress();
+  void OnLeftButtonLongPress();
 
-  FLASHMEM void OnRightButtonPress() { // toggle step (Euclidean only)
-    if (preset_mode || IsGrids()) return;
-    tracks[focus].ToggleStep(grid_cursor);
-  }
+  void OnRightButtonPress();
 
   // -- Encoders -------------------------------------------------------------
 
-  FLASHMEM void OnLeftEncoderMove(int direction) {
-    if (preset_mode) {
-      slot_cursor = (slot_cursor + direction + NUM_PRESETS) % NUM_PRESETS;
-      ResetCursor();
-      return;
-    }
-    int n; FieldList(n);
-    if (!EditMode()) {
-      cursor = (cursor + direction + n) % n;
-      ResetCursor();
-      return;
-    }
+  void OnLeftEncoderMove(int direction);
 
-    DrumTrack &t = tracks[focus];
-    switch (CurrentField()) {
-      case F_LENGTH:
-        t.change_value(TRACK_SETTING_LENGTH, direction);
-        t.Regenerate();
-        if (grid_cursor >= t.length()) grid_cursor = t.length() - 1;
-        break;
-      case F_BEATS:    t.change_value(TRACK_SETTING_BEATS, direction); t.Regenerate(); break;
-      case F_ROTATION: t.change_value(TRACK_SETTING_ROTATION, direction); t.Regenerate(); break;
-      case F_MUTE:     t.change_value(TRACK_SETTING_MUTE, direction); break;
-      case F_FILL:     t.change_value(TRACK_SETTING_FILL, direction * kBigStep); break;
-      case F_PART:     t.change_value(TRACK_SETTING_PART, direction); break;
-      case F_PROB:     t.change_value(TRACK_SETTING_PROBABILITY, direction); break;
-      case F_CV:       AdjustCVTarget(t, direction); break;
-      case F_X:     globals.change_value(GLOBAL_SETTING_X, direction * kBigStep); break;
-      case F_Y:     globals.change_value(GLOBAL_SETTING_Y, direction * kBigStep); break;
-      case F_CHAOS: globals.change_value(GLOBAL_SETTING_CHAOS, direction * kBigStep); break;
-      case F_MODE: {
-        globals.change_value(GLOBAL_SETTING_MODE, direction);
-        OnModeChanged();
-        cursor = IndexOfField(F_MODE); // stay on the Engine field (and keep editing)
-        break;
-      }
-      default: break;
-    }
-  }
-
-  FLASHMEM void OnRightEncoderMove(int direction) {
-    if (preset_mode || IsGrids()) return; // step cursor: Euclidean only
-    uint8_t len = tracks[focus].length();
-    grid_cursor = (grid_cursor + direction + len) % len;
-  }
+  void OnRightEncoderMove(int direction);
 
 private:
   int focus = 0;
@@ -509,27 +388,9 @@ private:
     if (IsGrids()) { count = 6; return grids; }
     count = 4; return euclid;
   }
-  FLASHMEM void AdjustCVTarget(DrumTrack &t, int dir) {
-    int n; const uint8_t* list = CVTargetList(n);
-    int idx = 0;
-    for (int k = 0; k < n; ++k) if (list[k] == t.cv_target()) { idx = k; break; }
-    idx = constrain(idx + dir, 0, n - 1);
-    t.apply_value(TRACK_SETTING_CV_TARGET, list[idx]);
-  }
+  void AdjustCVTarget(DrumTrack &t, int dir);
   // On mode change, drop CV targets not valid for the new mode, clamp cursor.
-  FLASHMEM void OnModeChanged() {
-    int n; const uint8_t* list = CVTargetList(n);
-    for (auto &t : tracks) {
-      bool ok = false;
-      for (int k = 0; k < n; ++k) if (list[k] == t.cv_target()) ok = true;
-      if (!ok) t.apply_value(TRACK_SETTING_CV_TARGET, CV_TARGET_NONE);
-    }
-    int fc; FieldList(fc);
-    if (cursor >= fc) cursor = fc - 1;
-    shared_step = 0;
-    for (auto &t : tracks) t.Regenerate();
-    ResetCursor();
-  }
+  void OnModeChanged();
 
   // Grids bilinear interpolation of the drum map (from the DrumMap applet).
   uint8_t ReadDrumMap(uint8_t step, uint8_t part, uint8_t x, uint8_t y) const {
@@ -555,147 +416,331 @@ private:
     return level > (255 - (int)t.fill());
   }
 
-  FLASHMEM void DrawTrackRow(int i) const {
-    const int y = 12 + i * 10;
-    const DrumTrack &t = tracks[i];
+  void DrawTrackRow(int i) const;
 
-    char label[2] = {kTrackLetters[i], 0};
-    gfxPrint(0, y, label);
-    if (i == focus) gfxInvert(0, y - 1, 7, 9);
-    if (t.mute()) gfxIcon(120, y, ZAP_ICON);
-
-    const int x0 = 10;
-    const int span = 116;
-
-    if (IsGrids()) {
-      const int steps = 32;
-      const int pitch = span / steps; // ~3px
-      for (int s = 0; s < steps; ++s) {
-        int x = x0 + s * pitch;
-        if (GridsHit(i, s)) gfxRect(x, y, 2, 5);
-        else gfxPixel(x, y + 4);
-        if (s == shared_step) gfxRect(x, y - 3, 2, 2);
-      }
-      return;
-    }
-
-    const uint8_t len = t.length();
-    int pitch = span / len;
-    if (pitch < 2) pitch = 2;
-    for (uint8_t s = 0; s < len; ++s) {
-      int x = x0 + s * pitch;
-      bool on = (t.pattern >> s) & 0x1;
-      if (on) gfxRect(x, y, 3, 5);
-      else gfxFrame(x, y, 3, 5);
-      if (s == t.step) gfxRect(x, y - 3, 3, 2);
-      if (i == focus && s == grid_cursor) gfxFrame(x - 1, y - 1, 5, 7);
-    }
-  }
-
-  FLASHMEM void DrawFieldCursor(int x, int y, int w) const {
-    if (EditMode()) gfxInvert(x - 1, y - 1, w + 2, 9);
-    else gfxFrame(x - 1, y - 1, w + 2, 9);
-  }
+  void DrawFieldCursor(int x, int y, int w) const;
   // Box the field at (x,w) if it is the current cursor field.
-  FLASHMEM void CursorIf(Field f, int x, int y, int w) const {
-    if (CurrentField() == f) DrawFieldCursor(x, y, w);
-  }
+  void CursorIf(Field f, int x, int y, int w) const;
 
-  FLASHMEM void DrawParams() const {
-    const int y = 52;
-    gfxLine(0, y - 2, 127, y - 2);
-
-    const int page = PageOf(CurrentField());
-    if (page == PAGE_GLOBAL) { DrawGlobalFooter(y); return; }
-    if (page == PAGE_CAL) { DrawCalFooter(y); return; }
-    if (page == PAGE_MODE) {
-      gfxPrint(1, y, "Engine:"); gfxPrint(46, y, kModeNames[globals.mode()]);
-      CursorIf(F_MODE, 46, y, 40);
-      return;
-    }
-
-    char label[6] = {'T', 'r', 'k', kTrackLetters[focus], 0, 0};
-    gfxPrint(1, y, label);
-    const DrumTrack &t = tracks[focus];
-
-    // Values shown are the effective (post-CV) values -- live_* equal the
-    // stored knob value unless a CV input is modulating that param.
-    if (page == PAGE_MOD) {
-      gfxPrint(26, y, "Pr"); gfxPrint(38, y, (int)t.live_probability);
-      CursorIf(F_PROB, 26, y, 24);
-      gfxPrint(60, y, "CV:"); gfxPrint(78, y, kCVTargetNames[t.cv_target()]);
-      CursorIf(F_CV, 60, y, 40);
-      return;
-    }
-
-    // PAGE_MAIN
-    if (IsGrids()) {
-      gfxPrint(28, y, "F"); gfxPrint(34, y, live_density[focus]);
-      CursorIf(F_FILL, 28, y, 24);
-      gfxPrint(60, y, "Pt"); gfxPrint(74, y, kPartNames[t.part()]);
-      CursorIf(F_PART, 60, y, 28);
-      gfxPrint(96, y, "Mu"); gfxPrint(108, y, t.mute() ? "on" : "--");
-      CursorIf(F_MUTE, 96, y, 24);
-      return;
-    }
-
-    gfxPrint(28, y, "L"); gfxPrint(34, y, (int)t.length());
-    CursorIf(F_LENGTH, 28, y, 18);
-    gfxPrint(50, y, "B"); gfxPrint(56, y, live_beats[focus]);
-    CursorIf(F_BEATS, 50, y, 18);
-    gfxPrint(72, y, "R"); gfxPrint(78, y, live_rotation[focus]);
-    CursorIf(F_ROTATION, 72, y, 18);
-    gfxPrint(96, y, "Mu"); gfxPrint(108, y, t.mute() ? "on" : "--");
-    CursorIf(F_MUTE, 96, y, 24);
-  }
+  void DrawParams() const;
 
   // Grids global page (Euclidean mode has no global page).
-  FLASHMEM void DrawGlobalFooter(int y) const {
-    gfxPrint(4, y, "X"); gfxPrint(12, y, live_x);
-    CursorIf(F_X, 4, y, 26);
-    gfxPrint(48, y, "Y"); gfxPrint(56, y, live_y);
-    CursorIf(F_Y, 48, y, 26);
-    gfxPrint(92, y, "Ch"); gfxPrint(104, y, live_chaos);
-    CursorIf(F_CHAOS, 92, y, 32);
-  }
+  void DrawGlobalFooter(int y) const;
 
   // CV input calibration ("learn"): shows the live input voltage and the
   // selected captured endpoint. Left-encoder press grabs the current input.
-  FLASHMEM void DrawCalFooter(int y) const {
-    gfxPrint(1, y, "In"); gfxPos(15, y); gfxPrintVoltage(In(focus));
-    const bool hi = (CurrentField() == F_CAL_HI);
-    gfxPrint(64, y, hi ? "Hi" : "Lo");
-    gfxPos(78, y); gfxPrintVoltage(hi ? cv_cal_high : cv_cal_low);
-    DrawFieldCursor(64, y, 52); // selected endpoint; press to grab input
-  }
+  void DrawCalFooter(int y) const;
 
-  FLASHMEM void DrawPresetBar() const {
-    const int y = 52;
-    gfxLine(0, y - 2, 127, y - 2);
-
-    gfxPrint(1, y, "Kit");
-
-    const int x0 = 22;
-    const int pitch = 12;
-    for (int p = 0; p < NUM_PRESETS; ++p) {
-      int x = x0 + p * pitch;
-      gfxPrint(x, y, p + 1);
-      if (p == active_slot) gfxRect(x + 1, y - 3, 3, 2);
-      if (p == slot_cursor) gfxFrame(x - 2, y - 1, 9, 9);
-    }
-
-    // Hints: UP = Save, DOWN = Load (left-encoder press exits).
-    if (save_flash > 0) {
-      gfxPrint(96, y, "SAVED");
-      --save_flash;
-    } else {
-      // The up/down glyphs sit in the top/bottom of their boxes; nudge so both
-      // arrowheads line up on the row's vertical middle, aligned with the text.
-      gfxIcon(72, y + 1, UP_BTN_ICON); gfxPrint(80, y, "Sv");
-      gfxIcon(98, y - 2, DOWN_BTN_ICON); gfxPrint(106, y, "Ld");
-    }
-  }
+  void DrawPresetBar() const;
 };
+
+FLASHMEM void EuclidKit::DrawPresetBar() const {
+  const int y = 52;
+  gfxLine(0, y - 2, 127, y - 2);
+
+  gfxPrint(1, y, "Kit");
+
+  const int x0 = 22;
+  const int pitch = 12;
+  for (int p = 0; p < NUM_PRESETS; ++p) {
+    int x = x0 + p * pitch;
+    gfxPrint(x, y, p + 1);
+    if (p == active_slot) gfxRect(x + 1, y - 3, 3, 2);
+    if (p == slot_cursor) gfxFrame(x - 2, y - 1, 9, 9);
+  }
+
+  // Hints: UP = Save, DOWN = Load (left-encoder press exits).
+  if (save_flash > 0) {
+    gfxPrint(96, y, "SAVED");
+    --save_flash;
+  } else {
+    // The up/down glyphs sit in the top/bottom of their boxes; nudge so both
+    // arrowheads line up on the row's vertical middle, aligned with the text.
+    gfxIcon(72, y + 1, UP_BTN_ICON); gfxPrint(80, y, "Sv");
+    gfxIcon(98, y - 2, DOWN_BTN_ICON); gfxPrint(106, y, "Ld");
+  }
+}
+
+FLASHMEM void EuclidKit::DrawCalFooter(int y) const {
+  gfxPrint(1, y, "In"); gfxPos(15, y); gfxPrintVoltage(In(focus));
+  const bool hi = (CurrentField() == F_CAL_HI);
+  gfxPrint(64, y, hi ? "Hi" : "Lo");
+  gfxPos(78, y); gfxPrintVoltage(hi ? cv_cal_high : cv_cal_low);
+  DrawFieldCursor(64, y, 52); // selected endpoint; press to grab input
+}
+
+FLASHMEM void EuclidKit::DrawGlobalFooter(int y) const {
+  gfxPrint(4, y, "X"); gfxPrint(12, y, live_x);
+  CursorIf(F_X, 4, y, 26);
+  gfxPrint(48, y, "Y"); gfxPrint(56, y, live_y);
+  CursorIf(F_Y, 48, y, 26);
+  gfxPrint(92, y, "Ch"); gfxPrint(104, y, live_chaos);
+  CursorIf(F_CHAOS, 92, y, 32);
+}
+
+FLASHMEM void EuclidKit::DrawParams() const {
+  const int y = 52;
+  gfxLine(0, y - 2, 127, y - 2);
+
+  const int page = PageOf(CurrentField());
+  if (page == PAGE_GLOBAL) { DrawGlobalFooter(y); return; }
+  if (page == PAGE_CAL) { DrawCalFooter(y); return; }
+  if (page == PAGE_MODE) {
+    gfxPrint(1, y, "Engine:"); gfxPrint(46, y, kModeNames[globals.mode()]);
+    CursorIf(F_MODE, 46, y, 40);
+    return;
+  }
+
+  char label[6] = {'T', 'r', 'k', kTrackLetters[focus], 0, 0};
+  gfxPrint(1, y, label);
+  const DrumTrack &t = tracks[focus];
+
+  // Values shown are the effective (post-CV) values -- live_* equal the
+  // stored knob value unless a CV input is modulating that param.
+  if (page == PAGE_MOD) {
+    gfxPrint(26, y, "Pr"); gfxPrint(38, y, (int)t.live_probability);
+    CursorIf(F_PROB, 26, y, 24);
+    gfxPrint(60, y, "CV:"); gfxPrint(78, y, kCVTargetNames[t.cv_target()]);
+    CursorIf(F_CV, 60, y, 40);
+    return;
+  }
+
+  // PAGE_MAIN
+  if (IsGrids()) {
+    gfxPrint(28, y, "F"); gfxPrint(34, y, live_density[focus]);
+    CursorIf(F_FILL, 28, y, 24);
+    gfxPrint(60, y, "Pt"); gfxPrint(74, y, kPartNames[t.part()]);
+    CursorIf(F_PART, 60, y, 28);
+    gfxPrint(96, y, "Mu"); gfxPrint(108, y, t.mute() ? "on" : "--");
+    CursorIf(F_MUTE, 96, y, 24);
+    return;
+  }
+
+  gfxPrint(28, y, "L"); gfxPrint(34, y, (int)t.length());
+  CursorIf(F_LENGTH, 28, y, 18);
+  gfxPrint(50, y, "B"); gfxPrint(56, y, live_beats[focus]);
+  CursorIf(F_BEATS, 50, y, 18);
+  gfxPrint(72, y, "R"); gfxPrint(78, y, live_rotation[focus]);
+  CursorIf(F_ROTATION, 72, y, 18);
+  gfxPrint(96, y, "Mu"); gfxPrint(108, y, t.mute() ? "on" : "--");
+  CursorIf(F_MUTE, 96, y, 24);
+}
+
+FLASHMEM void EuclidKit::CursorIf(Field f, int x, int y, int w) const {
+  if (CurrentField() == f) DrawFieldCursor(x, y, w);
+}
+
+FLASHMEM void EuclidKit::DrawFieldCursor(int x, int y, int w) const {
+  if (EditMode()) gfxInvert(x - 1, y - 1, w + 2, 9);
+  else gfxFrame(x - 1, y - 1, w + 2, 9);
+}
+
+FLASHMEM void EuclidKit::DrawTrackRow(int i) const {
+  const int y = 12 + i * 10;
+  const DrumTrack &t = tracks[i];
+
+  char label[2] = {kTrackLetters[i], 0};
+  gfxPrint(0, y, label);
+  if (i == focus) gfxInvert(0, y - 1, 7, 9);
+  if (t.mute()) gfxIcon(120, y, ZAP_ICON);
+
+  const int x0 = 10;
+  const int span = 116;
+
+  if (IsGrids()) {
+    const int steps = 32;
+    const int pitch = span / steps; // ~3px
+    for (int s = 0; s < steps; ++s) {
+      int x = x0 + s * pitch;
+      if (GridsHit(i, s)) gfxRect(x, y, 2, 5);
+      else gfxPixel(x, y + 4);
+      if (s == shared_step) gfxRect(x, y - 3, 2, 2);
+    }
+    return;
+  }
+
+  const uint8_t len = t.length();
+  int pitch = span / len;
+  if (pitch < 2) pitch = 2;
+  for (uint8_t s = 0; s < len; ++s) {
+    int x = x0 + s * pitch;
+    bool on = (t.pattern >> s) & 0x1;
+    if (on) gfxRect(x, y, 3, 5);
+    else gfxFrame(x, y, 3, 5);
+    if (s == t.step) gfxRect(x, y - 3, 3, 2);
+    if (i == focus && s == grid_cursor) gfxFrame(x - 1, y - 1, 5, 7);
+  }
+}
+
+FLASHMEM void EuclidKit::OnModeChanged() {
+  int n; const uint8_t* list = CVTargetList(n);
+  for (auto &t : tracks) {
+    bool ok = false;
+    for (int k = 0; k < n; ++k) if (list[k] == t.cv_target()) ok = true;
+    if (!ok) t.apply_value(TRACK_SETTING_CV_TARGET, CV_TARGET_NONE);
+  }
+  int fc; FieldList(fc);
+  if (cursor >= fc) cursor = fc - 1;
+  shared_step = 0;
+  for (auto &t : tracks) t.Regenerate();
+  ResetCursor();
+}
+
+FLASHMEM void EuclidKit::AdjustCVTarget(DrumTrack &t, int dir) {
+  int n; const uint8_t* list = CVTargetList(n);
+  int idx = 0;
+  for (int k = 0; k < n; ++k) if (list[k] == t.cv_target()) { idx = k; break; }
+  idx = constrain(idx + dir, 0, n - 1);
+  t.apply_value(TRACK_SETTING_CV_TARGET, list[idx]);
+}
+
+FLASHMEM void EuclidKit::OnRightEncoderMove(int direction) {
+  if (preset_mode || IsGrids()) return; // step cursor: Euclidean only
+  uint8_t len = tracks[focus].length();
+  grid_cursor = (grid_cursor + direction + len) % len;
+}
+
+FLASHMEM void EuclidKit::OnLeftEncoderMove(int direction) {
+  if (preset_mode) {
+    slot_cursor = (slot_cursor + direction + NUM_PRESETS) % NUM_PRESETS;
+    ResetCursor();
+    return;
+  }
+  int n; FieldList(n);
+  if (!EditMode()) {
+    cursor = (cursor + direction + n) % n;
+    ResetCursor();
+    return;
+  }
+
+  DrumTrack &t = tracks[focus];
+  switch (CurrentField()) {
+    case F_LENGTH:
+      t.change_value(TRACK_SETTING_LENGTH, direction);
+      t.Regenerate();
+      if (grid_cursor >= t.length()) grid_cursor = t.length() - 1;
+      break;
+    case F_BEATS:    t.change_value(TRACK_SETTING_BEATS, direction); t.Regenerate(); break;
+    case F_ROTATION: t.change_value(TRACK_SETTING_ROTATION, direction); t.Regenerate(); break;
+    case F_MUTE:     t.change_value(TRACK_SETTING_MUTE, direction); break;
+    case F_FILL:     t.change_value(TRACK_SETTING_FILL, direction * kBigStep); break;
+    case F_PART:     t.change_value(TRACK_SETTING_PART, direction); break;
+    case F_PROB:     t.change_value(TRACK_SETTING_PROBABILITY, direction); break;
+    case F_CV:       AdjustCVTarget(t, direction); break;
+    case F_X:     globals.change_value(GLOBAL_SETTING_X, direction * kBigStep); break;
+    case F_Y:     globals.change_value(GLOBAL_SETTING_Y, direction * kBigStep); break;
+    case F_CHAOS: globals.change_value(GLOBAL_SETTING_CHAOS, direction * kBigStep); break;
+    case F_MODE: {
+      globals.change_value(GLOBAL_SETTING_MODE, direction);
+      OnModeChanged();
+      cursor = IndexOfField(F_MODE); // stay on the Engine field (and keep editing)
+      break;
+    }
+    default: break;
+  }
+}
+
+FLASHMEM void EuclidKit::OnRightButtonPress() { // toggle step (Euclidean only)
+  if (preset_mode || IsGrids()) return;
+  tracks[focus].ToggleStep(grid_cursor);
+}
+
+FLASHMEM void EuclidKit::OnLeftButtonLongPress() {
+  if (preset_mode) return;
+  tracks[focus].apply_value(TRACK_SETTING_MUTE, !tracks[focus].mute());
+}
+
+FLASHMEM void EuclidKit::OnLeftButtonPress() {
+  if (preset_mode) { preset_mode = false; return; } // encoder press exits
+  // On the calibration page, press captures the current input into the
+  // selected endpoint (learn) rather than toggling edit mode.
+  Field f = CurrentField();
+  if (f == F_CAL_LO) { cv_cal_low = In(focus); ResetCursor(); return; }
+  if (f == F_CAL_HI) { cv_cal_high = In(focus); ResetCursor(); return; }
+  CursorToggle();
+}
+
+FLASHMEM void EuclidKit::OnDownButtonLongPress() { // clear manual overrides (Euclidean, not preset)
+  if (preset_mode || IsGrids()) return;
+  tracks[focus].ClearManual();
+}
+
+FLASHMEM void EuclidKit::OnDownButtonPress() { // preset screen: DOWN = Load
+  if (preset_mode) { LoadSlot(slot_cursor); active_slot = slot_cursor; return; }
+  focus = (focus + 1) & 3;
+  ResetCursor();
+}
+
+FLASHMEM void EuclidKit::OnUpButtonPress() { // preset screen: UP = Save
+  if (preset_mode) {
+    SaveSlot(slot_cursor);
+    active_slot = slot_cursor;
+    save_flash = kSaveFlashFrames;
+    return;
+  }
+  focus = (focus + 3) & 3;
+  ResetCursor();
+}
+
+FLASHMEM void EuclidKit::OnUpButtonLongPress() { // toggle preset screen
+  preset_mode = !preset_mode;
+  if (preset_mode) slot_cursor = active_slot;
+  CancelEdit();
+  ResetCursor();
+}
+
+FLASHMEM void EuclidKit::LoadSlot(int slot) {
+  preset_globals[slot].CopySettingsTo(globals);
+  for (int i = 0; i < 4; ++i) {
+    preset_tracks[slot][i].CopySettingsTo(tracks[i]);
+    tracks[i].Regenerate();
+  }
+  OnModeChanged();
+  CancelEdit();
+  cursor = 0;
+}
+
+FLASHMEM void EuclidKit::SaveSlot(int slot) {
+  globals.CopySettingsTo(preset_globals[slot]);
+  for (int i = 0; i < 4; ++i) tracks[i].CopySettingsTo(preset_tracks[slot][i]);
+}
+
+FLASHMEM void EuclidKit::Start() {
+  // Sentinel: freshly-constructed app has all-zero settings (invalid Length).
+  // Seed defaults once; InitDefaults() applies every declared default.
+  if (!tracks[0].length()) {
+    static const uint8_t def_len[4]   = {16, 16, 16, 13};
+    static const uint8_t def_beats[4] = { 4,  2,  8,  5};
+    static const uint8_t def_rot[4]   = { 0,  4,  0,  0};
+    static const uint8_t def_part[4]  = { 0,  1,  2,  2}; // BD SD HH HH
+    globals.InitDefaults();
+    for (int i = 0; i < 4; ++i) {
+      tracks[i].InitDefaults();
+      tracks[i].apply_value(TRACK_SETTING_LENGTH, def_len[i]);
+      tracks[i].apply_value(TRACK_SETTING_BEATS, def_beats[i]);
+      tracks[i].apply_value(TRACK_SETTING_ROTATION, def_rot[i]);
+      tracks[i].apply_value(TRACK_SETTING_PART, def_part[i]);
+    }
+    // Seed every preset slot with the default kit.
+    for (int p = 0; p < NUM_PRESETS; ++p) {
+      globals.CopySettingsTo(preset_globals[p]);
+      for (int i = 0; i < 4; ++i) tracks[i].CopySettingsTo(preset_tracks[p][i]);
+    }
+  }
+  for (auto &t : tracks) t.Regenerate();
+}
+
+FLASHMEM void EuclidKit::View() const {
+  gfxHeader("EuclidKit");
+  gfxPrint(92, 1, kModeAbbrev[globals.mode()]);
+  gfxIcon(118, 1, GAUGE_ICON);
+  if (PageOf(CurrentField()) != PAGE_MAIN) gfxInvert(117, 0, 10, 9);
+
+  for (int i = 0; i < 4; ++i) DrawTrackRow(i);
+  if (preset_mode) DrawPresetBar();
+  else DrawParams();
+}
+
 
 constexpr char EuclidKit::kTrackLetters[4];
 

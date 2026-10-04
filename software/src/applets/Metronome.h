@@ -52,9 +52,7 @@ public:
         GateOut(1, HS::clock_m.IsRunning());
     }
 
-    void View() {
-        DrawInterface();
-    }
+    void View();
 
     void OnButtonPress() {
       ++cursor %= 2;
@@ -136,3 +134,8 @@ private:
 
 
 };
+
+FLASHMEM void Metronome::View() {
+    DrawInterface();
+}
+

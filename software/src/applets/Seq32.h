@@ -145,9 +145,7 @@ public:
       if (edit_ticker) --edit_ticker;
     }
 
-    void View() {
-      DrawPanel();
-    }
+    void View();
 
     void OnButtonPress() {
       if (cursor == QUANT_SCALE)
@@ -387,3 +385,8 @@ private:
     }
 
 };
+
+FLASHMEM void Seq32::View() {
+  DrawPanel();
+}
+

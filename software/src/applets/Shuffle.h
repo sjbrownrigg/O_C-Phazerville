@@ -94,10 +94,7 @@ public:
 
     }
 
-    void View() {
-        DrawSelector();
-        DrawIndicator();
-    }
+    void View();
 
     // void OnButtonPress() { }
 
@@ -189,3 +186,9 @@ private:
         gfxDottedLine(lx, 42, lx, 60, 2);
     }
 };
+
+FLASHMEM void Shuffle::View() {
+    DrawSelector();
+    DrawIndicator();
+}
+

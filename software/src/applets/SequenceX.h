@@ -81,9 +81,7 @@ public:
 
     }
 
-    void View() {
-        DrawPanel();
-    }
+    void View();
 
     void OnButtonPress() {
         if (cursor >= SEQX_STEPS && !EditMode()) // toggle mute
@@ -212,3 +210,8 @@ private:
         return (muted & (0x01 << step));
     }
 };
+
+FLASHMEM void SequenceX::View() {
+    DrawPanel();
+}
+

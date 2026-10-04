@@ -42,57 +42,7 @@ public:
     }
     const uint8_t* applet_icon() { return PhzIcons::bugCrack; }
 
-    void Start() {
-        tone_kick = 32;
-        decay_kick = 60;
-        punch = 50;
-        decay_punch = 32;
-
-        tone_snare = 6;
-        decay_snare = 50; // Snare decay
-        snap = 55;
-        blend_snare = 31;
-
-        noise = random(0, (1<<12));
-
-        kick = WaveformManager::VectorOscillatorFromWaveform(HS::Sine);
-        kick.SetFrequency(Proportion(tone_kick, BNC_MAX_PARAM, 3000) + 3000);
-        kick.SetScale((12 << 7) * 3);
-
-        ForEachChannel(ch) levels[ch] = 0;
-
-        env_kick = WaveformManager::VectorOscillatorFromWaveform(HS::Exponential);
-        env_kick.SetScale(HEMISPHERE_MAX_CV);
-        env_kick.Offset(HEMISPHERE_MAX_CV);
-        env_kick.Cycle(0);
-        SetEnvDecayKick(decay_kick);
-
-        env_punch = WaveformManager::VectorOscillatorFromWaveform(HS::Exponential);
-        env_punch.SetScale(HEMISPHERE_3V_CV);
-        env_punch.Offset(HEMISPHERE_3V_CV);
-        env_punch.Cycle(0);
-        SetEnvDecayPunch(decay_punch);
-
-        snare = WaveformManager::VectorOscillatorFromWaveform(HS::Sine);
-        snare.SetFrequency(Proportion(tone_snare, BNC_MAX_PARAM, 60000) + 10000);
-        snare.SetScale((12 << 7) * 3);
-
-        env_snare = WaveformManager::VectorOscillatorFromWaveform(HS::Exponential);
-        env_snare.SetScale(HEMISPHERE_MAX_CV);
-        env_snare.Offset(HEMISPHERE_MAX_CV);
-        env_snare.Cycle(0);
-        env_noise = WaveformManager::VectorOscillatorFromWaveform(HS::Exponential);
-        env_noise.SetScale(HEMISPHERE_MAX_CV);
-        env_noise.Offset(HEMISPHERE_MAX_CV);
-        env_noise.Cycle(0);
-        SetEnvDecaySnare(decay_snare);
-
-        env_snap = WaveformManager::VectorOscillatorFromWaveform(HS::Exponential);
-        env_snap.SetScale(HEMISPHERE_3V_CV);
-        env_snap.Offset(HEMISPHERE_3V_CV);
-        env_snap.Cycle(0);
-        SetEnvDecaySnap(decay_snare);
-    }
+    void Start();
 
     void Controller() {
         int32_t bd_signal = 0;
@@ -420,74 +370,7 @@ private:
                       30, ProportionCV(levels[ch], 34));
     }
 
-    void DrawDrumBody(byte x, byte tone, byte decay, byte punch, byte pdecay, bool is_snare) {
-        const int8_t wmin = 10;
-        const int8_t wmax = 30;
-        const int8_t hmin = 6;
-        const int8_t hmax = 16;
-
-        int8_t w = Proportion(decay, BNC_MAX_PARAM, wmax - wmin) + wmin;
-        int8_t h = Proportion(punch, BNC_MAX_PARAM, hmax - hmin) + hmin;
-        int8_t body_h = (2*h/hmin - 1) + hmin - 2;
-        int8_t r = Proportion(pdecay, BNC_MAX_PARAM, body_h);
-        int8_t y = 40 - Proportion(tone, BNC_MAX_PARAM, 18);
-
-        int8_t cx = x + wmax/2;
-        int8_t cy = y;
-
-        // Body
-        int dx = w/5;
-        gfxLine(
-            cx - dx + 1, cy - body_h/2,
-            cx + dx - 1, cy - body_h/2);
-        gfxLine(
-            cx - dx + 2, cy - body_h/2-1,
-            cx + dx - 2, cy - body_h/2-1);
-        gfxLine(
-            cx - dx + 1, cy + body_h/2,
-            cx + dx - 1, cy + body_h/2);
-        gfxRect(
-            cx - dx + 1, cy - body_h/2 + 1,
-            2*dx - 1, r - 1);
-
-        // Legs
-        for(int p=-1; p<=1; p+=2) { // parity for both sides
-            int _dx = p*dx;
-            // Front legs
-            gfxLine(
-                cx + _dx, cy - body_h/2,
-                cx + p*w/3, cy - h/2);
-            // Mid legs
-            gfxLine(
-                cx + _dx, cy - 1,
-                cx + _dx + 2*p, cy-1);
-            gfxLine(
-                cx + _dx + 2*p, cy - 1,
-                cx + p*w/2, cy - 2);
-            // Rear legs
-            gfxLine(
-                cx + _dx, cy + 1,
-                cx + p*w/3, cy + hmax/h);
-            gfxLine(
-                cx + p*w/3, cy + hmax/h,
-                cx + p*w/2, cy + h/2);
-            // Body flank
-            gfxLine(
-                cx+_dx, cy-body_h/2+1,
-                cx+_dx, cy+body_h/2-1);
-            if(is_snare) {
-                // Some feelers for snare bug
-                gfxLine(
-                    cx + p, cy - body_h/2 - 2,
-                    cx + 2*p, cy - body_h/2 - 2 - hmax/h);
-            } else {
-                // Some eyes on the kick bug
-                gfxInvert(
-                    cx + _dx - p, cy - body_h/2 + 1,
-                    1, 1);
-            }
-        }
-    }
+    void DrawDrumBody(byte x, byte tone, byte decay, byte punch, byte pdecay, bool is_snare);
 
     void SetEnvDecayKick(int decay) {
         // 100 ms - 1000 ms -> 10 Hz - 1 Hz
@@ -510,6 +393,128 @@ private:
             8000 - Proportion(decay, BNC_MAX_PARAM, 4000));
     }
 };
+
+FLASHMEM void BugCrack::DrawDrumBody(byte x, byte tone, byte decay, byte punch, byte pdecay, bool is_snare) {
+    const int8_t wmin = 10;
+    const int8_t wmax = 30;
+    const int8_t hmin = 6;
+    const int8_t hmax = 16;
+
+    int8_t w = Proportion(decay, BNC_MAX_PARAM, wmax - wmin) + wmin;
+    int8_t h = Proportion(punch, BNC_MAX_PARAM, hmax - hmin) + hmin;
+    int8_t body_h = (2*h/hmin - 1) + hmin - 2;
+    int8_t r = Proportion(pdecay, BNC_MAX_PARAM, body_h);
+    int8_t y = 40 - Proportion(tone, BNC_MAX_PARAM, 18);
+
+    int8_t cx = x + wmax/2;
+    int8_t cy = y;
+
+    // Body
+    int dx = w/5;
+    gfxLine(
+        cx - dx + 1, cy - body_h/2,
+        cx + dx - 1, cy - body_h/2);
+    gfxLine(
+        cx - dx + 2, cy - body_h/2-1,
+        cx + dx - 2, cy - body_h/2-1);
+    gfxLine(
+        cx - dx + 1, cy + body_h/2,
+        cx + dx - 1, cy + body_h/2);
+    gfxRect(
+        cx - dx + 1, cy - body_h/2 + 1,
+        2*dx - 1, r - 1);
+
+    // Legs
+    for(int p=-1; p<=1; p+=2) { // parity for both sides
+        int _dx = p*dx;
+        // Front legs
+        gfxLine(
+            cx + _dx, cy - body_h/2,
+            cx + p*w/3, cy - h/2);
+        // Mid legs
+        gfxLine(
+            cx + _dx, cy - 1,
+            cx + _dx + 2*p, cy-1);
+        gfxLine(
+            cx + _dx + 2*p, cy - 1,
+            cx + p*w/2, cy - 2);
+        // Rear legs
+        gfxLine(
+            cx + _dx, cy + 1,
+            cx + p*w/3, cy + hmax/h);
+        gfxLine(
+            cx + p*w/3, cy + hmax/h,
+            cx + p*w/2, cy + h/2);
+        // Body flank
+        gfxLine(
+            cx+_dx, cy-body_h/2+1,
+            cx+_dx, cy+body_h/2-1);
+        if(is_snare) {
+            // Some feelers for snare bug
+            gfxLine(
+                cx + p, cy - body_h/2 - 2,
+                cx + 2*p, cy - body_h/2 - 2 - hmax/h);
+        } else {
+            // Some eyes on the kick bug
+            gfxInvert(
+                cx + _dx - p, cy - body_h/2 + 1,
+                1, 1);
+        }
+    }
+}
+
+FLASHMEM void BugCrack::Start() {
+    tone_kick = 32;
+    decay_kick = 60;
+    punch = 50;
+    decay_punch = 32;
+
+    tone_snare = 6;
+    decay_snare = 50; // Snare decay
+    snap = 55;
+    blend_snare = 31;
+
+    noise = random(0, (1<<12));
+
+    kick = WaveformManager::VectorOscillatorFromWaveform(HS::Sine);
+    kick.SetFrequency(Proportion(tone_kick, BNC_MAX_PARAM, 3000) + 3000);
+    kick.SetScale((12 << 7) * 3);
+
+    ForEachChannel(ch) levels[ch] = 0;
+
+    env_kick = WaveformManager::VectorOscillatorFromWaveform(HS::Exponential);
+    env_kick.SetScale(HEMISPHERE_MAX_CV);
+    env_kick.Offset(HEMISPHERE_MAX_CV);
+    env_kick.Cycle(0);
+    SetEnvDecayKick(decay_kick);
+
+    env_punch = WaveformManager::VectorOscillatorFromWaveform(HS::Exponential);
+    env_punch.SetScale(HEMISPHERE_3V_CV);
+    env_punch.Offset(HEMISPHERE_3V_CV);
+    env_punch.Cycle(0);
+    SetEnvDecayPunch(decay_punch);
+
+    snare = WaveformManager::VectorOscillatorFromWaveform(HS::Sine);
+    snare.SetFrequency(Proportion(tone_snare, BNC_MAX_PARAM, 60000) + 10000);
+    snare.SetScale((12 << 7) * 3);
+
+    env_snare = WaveformManager::VectorOscillatorFromWaveform(HS::Exponential);
+    env_snare.SetScale(HEMISPHERE_MAX_CV);
+    env_snare.Offset(HEMISPHERE_MAX_CV);
+    env_snare.Cycle(0);
+    env_noise = WaveformManager::VectorOscillatorFromWaveform(HS::Exponential);
+    env_noise.SetScale(HEMISPHERE_MAX_CV);
+    env_noise.Offset(HEMISPHERE_MAX_CV);
+    env_noise.Cycle(0);
+    SetEnvDecaySnare(decay_snare);
+
+    env_snap = WaveformManager::VectorOscillatorFromWaveform(HS::Exponential);
+    env_snap.SetScale(HEMISPHERE_3V_CV);
+    env_snap.Offset(HEMISPHERE_3V_CV);
+    env_snap.Cycle(0);
+    SetEnvDecaySnap(decay_snare);
+}
+
 
 FLASHMEM void BugCrack::View() {
   DrawInterface();

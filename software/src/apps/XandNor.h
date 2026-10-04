@@ -48,6 +48,49 @@ static const char * const kPageNames[PAGE_COUNT] = {
   "Overview", "Channel A", "Channel B", "Channel C", "Channel D", "Routing"
 };
 
+// Output functions. OUT and NOT read one channel; the rest combine two.
+enum Function { FN_OUT, FN_NOT, FN_AND, FN_NAND, FN_OR, FN_NOR, FN_XOR, FN_XNOR, FN_COUNT };
+static const char * const kFunctionNames[FN_COUNT] = {
+  "OUT", "NOT", "AND", "NAND", "OR", "NOR", "XOR", "XNOR"
+};
+
+struct Route {
+  uint8_t fn;
+  uint8_t a, b; // channel indices; b unused by OUT and NOT
+};
+
+// Default patch: every channel on T1 with a different length, so one clock fans
+// out into nested gates (outputs 1-4) and the slices between them (5-8).
+static const Route kDefaultRoutes[8] = {
+  {FN_OUT, 0, 0}, {FN_OUT, 1, 1}, {FN_OUT, 2, 2}, {FN_OUT, 3, 3},
+  {FN_XOR, 0, 1}, {FN_XOR, 1, 2}, {FN_XOR, 2, 3}, {FN_NOT, 3, 3},
+};
+
+// Gate lengths in microseconds: 1 ms to 10 s, ten steps per decade.
+// Length setting 0 is Thru (follow the input gate); kLengthInfinite holds the
+// gate high until the next trigger.
+static constexpr uint32_t kLengthUs[] = {
+  1000, 1200, 1500, 2000, 2500, 3000, 4000, 5000, 6000, 8000,
+  10000, 12000, 15000, 20000, 25000, 30000, 40000, 50000, 60000, 80000,
+  100000, 120000, 150000, 200000, 250000, 300000, 400000, 500000, 600000, 800000,
+  1000000, 1200000, 1500000, 2000000, 2500000, 3000000, 4000000, 5000000, 6000000, 8000000,
+  10000000,
+};
+static constexpr int kNumLengths = sizeof(kLengthUs) / sizeof(kLengthUs[0]);
+static constexpr int kLengthThru = 0;
+static constexpr int kLengthInfinite = kNumLengths + 1;
+static constexpr int kDefaultLengths[kNumChannels] = {11, 18, 21, 25}; // 10, 50, 100, 250 ms
+
+// A retrigger while the gate is high drops it for this long, so downstream
+// modules see a fresh edge. 4 ticks = 240 us.
+static constexpr uint8_t kDropTicks = 4;
+
+static constexpr uint32_t LengthTicks(int setting) {
+  return (kLengthUs[setting - 1] + OC_CORE_TIMER_RATE / 2) / OC_CORE_TIMER_RATE;
+}
+
+enum ChannelField { FIELD_SOURCE, FIELD_LENGTH, FIELD_COUNT };
+
 } // namespace XandNorDefs
 
 OC_APP_CLASS(XandNor, TWOCCS("XN"), "(X)AND (N)OR", "Gate Logic"),
@@ -59,27 +102,120 @@ public:
   void Resume() {}
 
   void Controller() {
+    using namespace XandNorDefs;
+    bool gate[kNumChannels];
+    for (int ch = 0; ch < kNumChannels; ++ch) gate[ch] = ProcessChannel(ch);
+
+    for (int o = 0; o < kNumOutputs; ++o) {
+      const Route &r = routes[o];
+      const bool a = gate[r.a], b = gate[r.b];
+      bool v;
+      switch (r.fn) {
+        case FN_NOT:  v = !a; break;
+        case FN_AND:  v = a && b; break;
+        case FN_NAND: v = !(a && b); break;
+        case FN_OR:   v = a || b; break;
+        case FN_NOR:  v = !(a || b); break;
+        case FN_XOR:  v = a != b; break;
+        case FN_XNOR: v = a == b; break;
+        default:      v = a; break;
+      }
+      out_high[o] = v;
+      GateOut(o, v);
+    }
   }
 
   void View() const;
 
   void OnUpButtonPress();
   void OnDownButtonPress();
+  void OnLeftEncoderMove(int direction);
+  void OnRightEncoderMove(int direction);
 
 private:
+  // Settings (stored in presets from M3)
+  DigitalInputMap source[XandNorDefs::kNumChannels];
+  uint8_t length[XandNorDefs::kNumChannels];
+  XandNorDefs::Route routes[8];
+
+  // Engine state, owned by Controller()
+  struct ChannelState {
+    uint32_t remaining; // ticks left in a finite gate
+    uint8_t drop;       // ticks left in a retrigger drop
+    bool active;        // the gate is running (high, or dropping before going high again)
+  } state[XandNorDefs::kNumChannels];
+  bool chan_high[XandNorDefs::kNumChannels];
+  bool out_high[XandNorDefs::kNumOutputs];
+
+  // UI
   int page = XandNorDefs::PAGE_OVERVIEW;
+  int cursor = 0;
+
+  // Advances channel ch by one tick and returns its gate.
+  bool ProcessChannel(int ch) {
+    using namespace XandNorDefs;
+    ChannelState &s = state[ch];
+    const bool trig = source[ch].Clock(); // always called, to track edges
+    const int len = length[ch];
+
+    if (len == kLengthThru) {
+      s.active = false;
+      s.drop = 0;
+      return chan_high[ch] = source[ch].Gate();
+    }
+
+    if (trig) {
+      if (s.drop) {
+        // already restarting
+      } else if (s.active) {
+        s.drop = kDropTicks;
+      } else {
+        StartGate(ch, len);
+      }
+    }
+
+    if (s.drop) {
+      if (--s.drop == 0) StartGate(ch, len);
+      return chan_high[ch] = false;
+    }
+
+    if (s.active && len != kLengthInfinite) {
+      if (s.remaining == 0 || --s.remaining == 0) s.active = false;
+    }
+    return chan_high[ch] = s.active;
+  }
+
+  void StartGate(int ch, int len) {
+    using namespace XandNorDefs;
+    state[ch].active = true;
+    state[ch].remaining = (len == kLengthInfinite) ? 0 : LengthTicks(len);
+  }
 
   void DrawOverview() const;
   void DrawChannelPage(int ch) const;
   void DrawRouting() const;
   void DrawPageDots() const;
+  void PrintLength(int setting) const;
+  void PrintRoute(const XandNorDefs::Route &r) const;
 };
 
-// -- UI ----------------------------------------------------------------------
+// -- Setup -------------------------------------------------------------------
 
 FLASHMEM void XandNor::Start() {
-  page = XandNorDefs::PAGE_OVERVIEW;
+  using namespace XandNorDefs;
+  for (int ch = 0; ch < kNumChannels; ++ch) {
+    source[ch].SetGateInput(0);
+    length[ch] = kDefaultLengths[ch];
+    state[ch] = {0, 0, false};
+    chan_high[ch] = false;
+  }
+  for (int o = 0; o < 8; ++o) routes[o] = kDefaultRoutes[o];
+  for (int o = 0; o < kNumOutputs; ++o) out_high[o] = false;
+  page = PAGE_OVERVIEW;
+  cursor = 0;
 }
+
+// -- UI ----------------------------------------------------------------------
 
 FLASHMEM void XandNor::View() const {
   using namespace XandNorDefs;
@@ -96,35 +232,73 @@ FLASHMEM void XandNor::View() const {
 
 FLASHMEM void XandNor::DrawOverview() const {
   using namespace XandNorDefs;
-  // Channels A-D on the top row, outputs on the row below.
+  // Channels A-D on the top row, outputs on the row below; filled = high.
   for (int ch = 0; ch < kNumChannels; ++ch) {
     const int x = 4 + ch * 31;
     gfxFrame(x, 16, 26, 12);
     const char name[2] = { char('A' + ch), '\0' };
     gfxPrint(x + 10, 18, name);
+    if (chan_high[ch]) gfxInvert(x + 1, 17, 24, 10);
   }
   const int w = 128 / kNumOutputs;
   for (int o = 0; o < kNumOutputs; ++o) {
     const int x = o * w + (w - 12) / 2;
     gfxFrame(x, 34, 12, 12);
     gfxPrint(x + 3, 36, o + 1);
+    if (out_high[o]) gfxInvert(x + 1, 35, 10, 10);
+  }
+}
+
+FLASHMEM void XandNor::PrintLength(int setting) const {
+  using namespace XandNorDefs;
+  if (setting == kLengthThru) { gfxPrint("Thru"); return; }
+  if (setting == kLengthInfinite) { gfxPrint("Inf"); return; }
+  const uint32_t us = kLengthUs[setting - 1];
+  if (us < 10000) {        // 1.0 - 8.0 ms
+    gfxPrint(int(us / 1000)); gfxPrint("."); gfxPrint(int(us / 100 % 10)); gfxPrint("ms");
+  } else if (us < 1000000) {
+    gfxPrint(int(us / 1000)); gfxPrint("ms");
+  } else {                 // 1.0 - 10.0 s
+    gfxPrint(int(us / 1000000)); gfxPrint("."); gfxPrint(int(us / 100000 % 10)); gfxPrint("s");
   }
 }
 
 FLASHMEM void XandNor::DrawChannelPage(int ch) const {
-  gfxPrint(1, 18, "Source:");
-  gfxPrint(1, 30, "Length:");
-  (void)ch; // channel settings arrive in M1
+  using namespace XandNorDefs;
+  gfxPrint(1, 16, "Source:");
+  gfxPrint(52, 16, source[ch].InputName());
+  gfxPrint(1, 28, "Length:");
+  gfxPos(52, 28);
+  PrintLength(length[ch]);
+  gfxCursor(51, cursor == FIELD_SOURCE ? 24 : 36, 48);
+
+  // Live gate indicator
+  gfxFrame(1, 42, 126, 8);
+  if (chan_high[ch]) gfxRect(2, 43, 124, 6);
+}
+
+FLASHMEM void XandNor::PrintRoute(const XandNorDefs::Route &r) const {
+  using namespace XandNorDefs;
+  gfxPrint(kFunctionNames[r.fn]);
+  gfxPrint(" ");
+  const char a[2] = { char('A' + r.a), '\0' };
+  gfxPrint(a);
+  if (r.fn != FN_OUT && r.fn != FN_NOT) {
+    const char b[2] = { char('A' + r.b), '\0' };
+    gfxPrint(b);
+  }
 }
 
 FLASHMEM void XandNor::DrawRouting() const {
   using namespace XandNorDefs;
-  // Two columns of four outputs.
+  // Two columns of four outputs; the number is inverted while the output is high.
   for (int o = 0; o < kNumOutputs; ++o) {
     const int x = (o / 4) * 64 + 1;
     const int y = 14 + (o % 4) * 10;
     gfxPrint(x, y, o + 1);
-    gfxPrint(":");
+    if (out_high[o]) gfxInvert(x - 1, y - 1, 8, 9);
+    gfxPos(x + 9, y);
+    PrintRoute(routes[o]);
   }
 }
 
@@ -143,6 +317,23 @@ FLASHMEM void XandNor::OnUpButtonPress() {
 
 FLASHMEM void XandNor::OnDownButtonPress() {
   page = (page + 1) % XandNorDefs::PAGE_COUNT;
+}
+
+FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
+  using namespace XandNorDefs;
+  if (page < PAGE_CHANNEL_A || page > PAGE_CHANNEL_D) return;
+  cursor = constrain(cursor + direction, 0, FIELD_COUNT - 1);
+}
+
+FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
+  using namespace XandNorDefs;
+  if (page < PAGE_CHANNEL_A || page > PAGE_CHANNEL_D) return;
+  const int ch = page - PAGE_CHANNEL_A;
+  if (cursor == FIELD_SOURCE) {
+    source[ch].ChangeSource(direction);
+  } else {
+    length[ch] = constrain(length[ch] + direction, kLengthThru, kLengthInfinite);
+  }
 }
 
 // -- App interface ------------------------------------------------------------
@@ -182,4 +373,7 @@ FLASHMEM void XandNor::HandleButtonEvent(const UI::Event &event) {
   if (event.control == OC::CONTROL_BUTTON_DOWN) OnDownButtonPress();
 }
 
-FLASHMEM void XandNor::HandleEncoderEvent(const UI::Event &) {}
+FLASHMEM void XandNor::HandleEncoderEvent(const UI::Event &event) {
+  if (event.control == OC::CONTROL_ENCODER_L) OnLeftEncoderMove(event.value);
+  if (event.control == OC::CONTROL_ENCODER_R) OnRightEncoderMove(event.value);
+}

@@ -18,11 +18,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 //
-// (X)AND (N)OR - four gate-length processors (channels A-D) feeding freely
+// (X)AND (N)OR - four gate-length processors (channels CH1-CH4) feeding freely
 // routed gate outputs. Each output carries a channel's gate, its inverse, or a
 // logic function (AND, NAND, OR, NOR, XOR, XNOR) of two channels.
 //
-// All outputs are used: 8 on Teensy 4.1 builds, 4 on Teensy 4.0.
+// All outputs are used: A-H on Teensy 4.1 builds, A-D on Teensy 4.0, matching
+// the panel labels.
 //
 // Only Controller() runs in the 16.7 kHz ISR. Everything else is defined out of
 // class and marked FLASHMEM: in-class definitions stay in RAM1 regardless.
@@ -45,7 +46,7 @@ static constexpr int kNumChannels = 4;
 static constexpr int kNumOutputs = DAC_CHANNEL_COUNT;
 
 static const char * const kPageNames[PAGE_COUNT] = {
-  "Overview", "Channel A", "Channel B", "Channel C", "Channel D", "Routing"
+  "Overview", "CH1", "CH2", "CH3", "CH4", "Routing"
 };
 
 // Output functions. OUT and NOT read one channel; the rest combine two.
@@ -60,7 +61,7 @@ struct Route {
 };
 
 // Default patch: every channel on T1 with a different length, so one clock fans
-// out into nested gates (outputs 1-4) and the slices between them (5-8).
+// out into nested gates (outputs A-D) and the slices between them (E-H).
 static const Route kDefaultRoutes[8] = {
   {FN_OUT, 0, 0}, {FN_OUT, 1, 1}, {FN_OUT, 2, 2}, {FN_OUT, 3, 3},
   {FN_XOR, 0, 1}, {FN_XOR, 1, 2}, {FN_XOR, 2, 3}, {FN_NOT, 3, 3},
@@ -196,7 +197,7 @@ private:
   void DrawRouting() const;
   void DrawPageDots() const;
   void PrintLength(int setting) const;
-  void PrintRoute(const XandNorDefs::Route &r) const;
+  void PrintRoute(int x, int y, const XandNorDefs::Route &r) const;
 };
 
 // -- Setup -------------------------------------------------------------------
@@ -236,15 +237,16 @@ FLASHMEM void XandNor::DrawOverview() const {
   for (int ch = 0; ch < kNumChannels; ++ch) {
     const int x = 4 + ch * 31;
     gfxFrame(x, 16, 26, 12);
-    const char name[2] = { char('A' + ch), '\0' };
-    gfxPrint(x + 10, 18, name);
+    gfxPrint(x + 4, 18, "CH");
+    gfxPrint(ch + 1);
     if (chan_high[ch]) gfxInvert(x + 1, 17, 24, 10);
   }
   const int w = 128 / kNumOutputs;
   for (int o = 0; o < kNumOutputs; ++o) {
     const int x = o * w + (w - 12) / 2;
     gfxFrame(x, 34, 12, 12);
-    gfxPrint(x + 3, 36, o + 1);
+    const char name[2] = { char('A' + o), '\0' };
+    gfxPrint(x + 3, 36, name);
     if (out_high[o]) gfxInvert(x + 1, 35, 10, 10);
   }
 }
@@ -277,28 +279,26 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
   if (chan_high[ch]) gfxRect(2, 43, 124, 6);
 }
 
-FLASHMEM void XandNor::PrintRoute(const XandNorDefs::Route &r) const {
+// Draws "FN a b" from x, e.g. "XOR 3 4" for CH3 XOR CH4. Only channel numbers
+// fit in half the screen; the function gets a 4-character column so the
+// operands line up down the page.
+FLASHMEM void XandNor::PrintRoute(int x, int y, const XandNorDefs::Route &r) const {
   using namespace XandNorDefs;
-  gfxPrint(kFunctionNames[r.fn]);
-  gfxPrint(" ");
-  const char a[2] = { char('A' + r.a), '\0' };
-  gfxPrint(a);
-  if (r.fn != FN_OUT && r.fn != FN_NOT) {
-    const char b[2] = { char('A' + r.b), '\0' };
-    gfxPrint(b);
-  }
+  gfxPrint(x, y, kFunctionNames[r.fn]);
+  gfxPrint(x + 28, y, r.a + 1);
+  if (r.fn != FN_OUT && r.fn != FN_NOT) gfxPrint(x + 40, y, r.b + 1);
 }
 
 FLASHMEM void XandNor::DrawRouting() const {
   using namespace XandNorDefs;
-  // Two columns of four outputs; the number is inverted while the output is high.
+  // Two columns of four outputs; the letter is inverted while the output is high.
   for (int o = 0; o < kNumOutputs; ++o) {
     const int x = (o / 4) * 64 + 1;
     const int y = 14 + (o % 4) * 10;
-    gfxPrint(x, y, o + 1);
-    if (out_high[o]) gfxInvert(x - 1, y - 1, 8, 9);
-    gfxPos(x + 9, y);
-    PrintRoute(routes[o]);
+    const char name[2] = { char('A' + o), '\0' };
+    gfxPrint(x, y, name);
+    if (out_high[o]) gfxInvert(x - 1, y - 1, 7, 9);
+    PrintRoute(x + 8, y, routes[o]);
   }
 }
 

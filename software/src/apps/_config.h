@@ -37,6 +37,9 @@ namespace menu = OC::menu;
 #ifdef ENABLE_APP_EUCLIDKIT
 #include "EuclidKit.h"
 #endif
+#ifdef ENABLE_APP_XANDNOR
+#include "XandNor.h"
+#endif
 #include "TheDarkestTimeline.h"
 #include "Enigma.h"
 #ifdef ENABLE_APP_NEURAL_NETWORK
@@ -84,6 +87,9 @@ static AppContainer<void // this space intentionally left blank
 #endif
 #ifdef ENABLE_APP_EUCLIDKIT
   , EuclidKit
+#endif
+#ifdef ENABLE_APP_XANDNOR
+  , XandNor
 #endif
 #ifdef ENABLE_APP_DARKEST_TIMELINE
   , TheDarkestTimeline

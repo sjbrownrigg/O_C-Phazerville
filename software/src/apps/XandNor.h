@@ -92,6 +92,12 @@ static constexpr uint32_t LengthTicks(int setting) {
 
 enum ChannelField { FIELD_SOURCE, FIELD_LENGTH, FIELD_COUNT };
 
+// Routing page cursor: each output has three fields, the second channel only
+// for two-input functions.
+enum RouteField { ROUTE_FN, ROUTE_A, ROUTE_B, ROUTE_FIELDS };
+
+static constexpr bool TwoInputs(uint8_t fn) { return fn != FN_OUT && fn != FN_NOT; }
+
 } // namespace XandNorDefs
 
 OC_APP_CLASS(XandNor, TWOCCS("XN"), "(X)AND (N)OR", "Gate Logic"),
@@ -150,7 +156,8 @@ private:
 
   // UI
   int page = XandNorDefs::PAGE_OVERVIEW;
-  int cursor = 0;
+  int cursor = 0;       // channel pages
+  int route_cursor = 0; // routing page: output * ROUTE_FIELDS + field
 
   // Advances channel ch by one tick and returns its gate.
   bool ProcessChannel(int ch) {
@@ -214,6 +221,7 @@ FLASHMEM void XandNor::Start() {
   for (int o = 0; o < kNumOutputs; ++o) out_high[o] = false;
   page = PAGE_OVERVIEW;
   cursor = 0;
+  route_cursor = 0;
 }
 
 // -- UI ----------------------------------------------------------------------
@@ -286,7 +294,7 @@ FLASHMEM void XandNor::PrintRoute(int x, int y, const XandNorDefs::Route &r) con
   using namespace XandNorDefs;
   gfxPrint(x, y, kFunctionNames[r.fn]);
   gfxPrint(x + 28, y, r.a + 1);
-  if (r.fn != FN_OUT && r.fn != FN_NOT) gfxPrint(x + 40, y, r.b + 1);
+  if (TwoInputs(r.fn)) gfxPrint(x + 40, y, r.b + 1);
 }
 
 FLASHMEM void XandNor::DrawRouting() const {
@@ -306,6 +314,16 @@ FLASHMEM void XandNor::DrawRouting() const {
     gfxPrint(x, y, name);
     if (out_high[o]) gfxInvert(x - 1, y - 1, 7, 9);
     PrintRoute(x + 8, y, routes[o]);
+  }
+
+  // Underline the selected field: function, first or second channel.
+  const int o = route_cursor / ROUTE_FIELDS;
+  const int x = (o / 4) * 64 + 1;
+  const int y = 22 + (o % 4) * 9 + 8;
+  switch (route_cursor % ROUTE_FIELDS) {
+    case ROUTE_FN: gfxCursor(x + 8, y, 25); break;
+    case ROUTE_A:  gfxCursor(x + 36, y, 6); break;
+    default:       gfxCursor(x + 48, y, 6); break;
   }
 }
 
@@ -328,12 +346,38 @@ FLASHMEM void XandNor::OnDownButtonPress() {
 
 FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
   using namespace XandNorDefs;
+  if (page == PAGE_ROUTING) {
+    // Step through fields, skipping the second channel of OUT and NOT.
+    const int last = kNumOutputs * ROUTE_FIELDS - 1;
+    int c = route_cursor;
+    do {
+      c += (direction > 0) ? 1 : -1;
+    } while (c >= 0 && c <= last && c % ROUTE_FIELDS == ROUTE_B &&
+             !TwoInputs(routes[c / ROUTE_FIELDS].fn));
+    if (c >= 0 && c <= last) route_cursor = c;
+    return;
+  }
   if (page < PAGE_CHANNEL_A || page > PAGE_CHANNEL_D) return;
   cursor = constrain(cursor + direction, 0, FIELD_COUNT - 1);
 }
 
 FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
   using namespace XandNorDefs;
+  if (page == PAGE_ROUTING) {
+    Route &r = routes[route_cursor / ROUTE_FIELDS];
+    switch (route_cursor % ROUTE_FIELDS) {
+      case ROUTE_FN:
+        r.fn = constrain(r.fn + direction, 0, FN_COUNT - 1);
+        break;
+      case ROUTE_A:
+        r.a = constrain(r.a + direction, 0, kNumChannels - 1);
+        break;
+      default:
+        r.b = constrain(r.b + direction, 0, kNumChannels - 1);
+        break;
+    }
+    return;
+  }
   if (page < PAGE_CHANNEL_A || page > PAGE_CHANNEL_D) return;
   const int ch = page - PAGE_CHANNEL_A;
   if (cursor == FIELD_SOURCE) {

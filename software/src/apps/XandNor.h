@@ -291,10 +291,17 @@ FLASHMEM void XandNor::PrintRoute(int x, int y, const XandNorDefs::Route &r) con
 
 FLASHMEM void XandNor::DrawRouting() const {
   using namespace XandNorDefs;
-  // Two columns of four outputs; the letter is inverted while the output is high.
+  // Two columns of four outputs under a "Fn / Ch" header; the output letter is
+  // inverted while the output is high.
+  for (int col = 0; col * 4 < kNumOutputs; ++col) {
+    const int x = col * 64 + 1;
+    gfxPrint(x + 8, 13, "Fn");
+    gfxPrint(x + 36, 13, "Ch");
+    gfxDottedLine(x, 20, x + 55, 20);
+  }
   for (int o = 0; o < kNumOutputs; ++o) {
     const int x = (o / 4) * 64 + 1;
-    const int y = 14 + (o % 4) * 10;
+    const int y = 22 + (o % 4) * 9;
     const char name[2] = { char('A' + o), '\0' };
     gfxPrint(x, y, name);
     if (out_high[o]) gfxInvert(x - 1, y - 1, 7, 9);

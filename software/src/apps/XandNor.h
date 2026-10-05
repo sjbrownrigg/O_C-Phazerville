@@ -204,6 +204,7 @@ private:
   void DrawRouting() const;
   void DrawPageDots() const;
   void PrintLength(int setting) const;
+  void DrawFieldCursor(int x, int y, int w) const;
   void PrintRoute(int x, int y, const XandNorDefs::Route &r) const;
 };
 
@@ -259,6 +260,14 @@ FLASHMEM void XandNor::DrawOverview() const {
   }
 }
 
+// A steady underline (the platform's gfxCursor blinks), so the selected field
+// doesn't compete with output states flashing in time with the music.
+FLASHMEM void XandNor::DrawFieldCursor(int x, int y, int w) const {
+  gfxLine(x, y, x + w - 1, y);
+  gfxPixel(x, y - 1);
+  gfxPixel(x + w - 1, y - 1);
+}
+
 FLASHMEM void XandNor::PrintLength(int setting) const {
   using namespace XandNorDefs;
   if (setting == kLengthThru) { gfxPrint("Thru"); return; }
@@ -280,7 +289,7 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
   gfxPrint(1, 28, "Length:");
   gfxPos(52, 28);
   PrintLength(length[ch]);
-  gfxCursor(51, cursor == FIELD_SOURCE ? 24 : 36, 48);
+  DrawFieldCursor(51, cursor == FIELD_SOURCE ? 24 : 36, 48);
 
   // Live gate indicator
   gfxFrame(1, 42, 126, 8);
@@ -321,9 +330,9 @@ FLASHMEM void XandNor::DrawRouting() const {
   const int x = (o / 4) * 64 + 1;
   const int y = 22 + (o % 4) * 9 + 8;
   switch (route_cursor % ROUTE_FIELDS) {
-    case ROUTE_FN: gfxCursor(x + 8, y, 25); break;
-    case ROUTE_A:  gfxCursor(x + 36, y, 6); break;
-    default:       gfxCursor(x + 48, y, 6); break;
+    case ROUTE_FN: DrawFieldCursor(x + 8, y, 25); break;
+    case ROUTE_A:  DrawFieldCursor(x + 36, y, 6); break;
+    default:       DrawFieldCursor(x + 48, y, 6); break;
   }
 }
 

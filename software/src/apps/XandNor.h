@@ -98,12 +98,26 @@ enum RouteField { ROUTE_FN, ROUTE_A, ROUTE_B, ROUTE_FIELDS };
 
 static constexpr bool TwoInputs(uint8_t fn) { return fn != FN_OUT && fn != FN_NOT; }
 
+// A patch as stored in EEPROM and in the preset slots.
+struct PackedPatch {
+  uint32_t source[kNumChannels]; // DigitalInputMap::Pack()
+  uint8_t length[kNumChannels];
+  Route routes[8];
+};
+
+static constexpr int kNumSlots = 8;
+// Bump when PackedPatch changes; stored data with another version is ignored.
+static constexpr uint8_t kStorageVersion = 1;
+// version + slot-used mask + working patch + slots
+static constexpr size_t kStorageSize = 2 + (1 + kNumSlots) * sizeof(PackedPatch);
+static constexpr int kMessageFrames = 40; // "Saved"/"Loaded" banner, ~1 s
+
 } // namespace XandNorDefs
 
 OC_APP_CLASS(XandNor, TWOCCS("XN"), "(X)AND (N)OR", "Gate Logic"),
   public HSApplication {
 public:
-  OC_APP_INTERFACE_DECLARE(XandNor, 0);
+  OC_APP_INTERFACE_DECLARE(XandNor, XandNorDefs::kStorageSize);
 
   void Start();
   void Resume() {}
@@ -135,6 +149,7 @@ public:
   void View() const;
 
   void OnUpButtonPress();
+  void OnUpButtonLongPress();
   void OnDownButtonPress();
   void OnLeftEncoderMove(int direction);
   void OnRightEncoderMove(int direction);
@@ -158,6 +173,15 @@ private:
   int page = XandNorDefs::PAGE_OVERVIEW;
   int cursor = 0;       // channel pages
   int route_cursor = 0; // routing page: output * ROUTE_FIELDS + field
+
+  // Presets
+  XandNorDefs::PackedPatch slots[XandNorDefs::kNumSlots];
+  uint8_t slot_used = 0;   // bit per slot
+  int active_slot = -1;    // last slot saved or loaded; -1 = none
+  bool preset_mode = false;
+  int slot_cursor = 0;
+  mutable int message_frames = 0;
+  const char *message = "";
 
   // Advances channel ch by one tick and returns its gate.
   bool ProcessChannel(int ch) {
@@ -206,29 +230,97 @@ private:
   void PrintLength(int setting) const;
   void DrawFieldCursor(int x, int y, int w) const;
   void PrintRoute(int x, int y, const XandNorDefs::Route &r) const;
+  void DrawPresets() const;
+
+  void LoadDefaults();
+  void PackPatch(XandNorDefs::PackedPatch &p) const;
+  void UnpackPatch(const XandNorDefs::PackedPatch &p);
+  void SaveSlot(int slot);
+  void LoadSlot(int slot);
 };
 
 // -- Setup -------------------------------------------------------------------
 
+FLASHMEM void XandNor::LoadDefaults() {
+  using namespace XandNorDefs;
+  // Unpack rather than Clear(): Clear() resets edge detection, so a high input
+  // would fire every channel once.
+  DigitalInputMap t1;
+  t1.SetGateInput(0);
+  for (int ch = 0; ch < kNumChannels; ++ch) {
+    source[ch].Unpack(t1.Pack());
+    length[ch] = kDefaultLengths[ch];
+  }
+  for (int o = 0; o < 8; ++o) routes[o] = kDefaultRoutes[o];
+}
+
 FLASHMEM void XandNor::Start() {
   using namespace XandNorDefs;
+  LoadDefaults();
   for (int ch = 0; ch < kNumChannels; ++ch) {
-    source[ch].SetGateInput(0);
-    length[ch] = kDefaultLengths[ch];
     state[ch] = {0, 0, false};
     chan_high[ch] = false;
   }
-  for (int o = 0; o < 8; ++o) routes[o] = kDefaultRoutes[o];
   for (int o = 0; o < kNumOutputs; ++o) out_high[o] = false;
+  slot_used = 0;
+  active_slot = -1;
   page = PAGE_OVERVIEW;
   cursor = 0;
   route_cursor = 0;
+}
+
+// -- Presets -----------------------------------------------------------------
+
+FLASHMEM void XandNor::PackPatch(XandNorDefs::PackedPatch &p) const {
+  using namespace XandNorDefs;
+  for (int ch = 0; ch < kNumChannels; ++ch) {
+    p.source[ch] = source[ch].Pack();
+    p.length[ch] = length[ch];
+  }
+  for (int o = 0; o < 8; ++o) p.routes[o] = routes[o];
+}
+
+// Validates as it goes, so a corrupt or foreign slot can't index out of range.
+FLASHMEM void XandNor::UnpackPatch(const XandNorDefs::PackedPatch &p) {
+  using namespace XandNorDefs;
+  for (int ch = 0; ch < kNumChannels; ++ch) {
+    source[ch].Unpack(p.source[ch]);
+    length[ch] = constrain(p.length[ch], kLengthThru, kLengthInfinite);
+  }
+  for (int o = 0; o < 8; ++o) {
+    Route r = p.routes[o];
+    r.fn = constrain(r.fn, 0, FN_COUNT - 1);
+    r.a = constrain(r.a, 0, kNumChannels - 1);
+    r.b = constrain(r.b, 0, kNumChannels - 1);
+    routes[o] = r;
+  }
+}
+
+FLASHMEM void XandNor::SaveSlot(int slot) {
+  PackPatch(slots[slot]);
+  slot_used |= 1 << slot;
+  active_slot = slot;
+  message = "Saved";
+  message_frames = XandNorDefs::kMessageFrames;
+}
+
+// An empty slot loads the default patch.
+FLASHMEM void XandNor::LoadSlot(int slot) {
+  if (slot_used & (1 << slot)) UnpackPatch(slots[slot]);
+  else LoadDefaults();
+  active_slot = slot;
+  message = (slot_used & (1 << slot)) ? "Loaded" : "Defaults";
+  message_frames = XandNorDefs::kMessageFrames;
 }
 
 // -- UI ----------------------------------------------------------------------
 
 FLASHMEM void XandNor::View() const {
   using namespace XandNorDefs;
+  if (preset_mode) {
+    DrawPresets();
+    return;
+  }
   gfxHeader("(X)AND (N)OR");
   gfxPrint(128 - 6 * (int)strlen(kPageNames[page]) - 1, 1, kPageNames[page]);
 
@@ -257,6 +349,10 @@ FLASHMEM void XandNor::DrawOverview() const {
     const char name[2] = { char('A' + o), '\0' };
     gfxPrint(x + 3, 36, name);
     if (out_high[o]) gfxInvert(x + 1, 35, 10, 10);
+  }
+  if (active_slot >= 0) {
+    gfxPrint(1, 48, "Preset ");
+    gfxPrint(active_slot + 1);
   }
 }
 
@@ -336,6 +432,29 @@ FLASHMEM void XandNor::DrawRouting() const {
   }
 }
 
+// Preset overlay: slots 1-8 in two rows. The selected slot is inverted, used
+// slots carry a dot, and the active slot is framed twice.
+FLASHMEM void XandNor::DrawPresets() const {
+  using namespace XandNorDefs;
+  gfxHeader("(X)AND (N)OR");
+  gfxPrint(128 - 6 * 7 - 1, 1, "Presets");
+  for (int i = 0; i < kNumSlots; ++i) {
+    const int x = 4 + (i % 4) * 31;
+    const int y = 15 + (i / 4) * 17;
+    gfxFrame(x, y, 26, 14);
+    if (i == active_slot) gfxFrame(x + 1, y + 1, 24, 12);
+    gfxPrint(x + 6, y + 3, i + 1);
+    if (slot_used & (1 << i)) gfxRect(x + 16, y + 5, 3, 3);
+    if (i == slot_cursor) gfxInvert(x, y, 26, 14);
+  }
+  if (message_frames > 0) {
+    --message_frames;
+    gfxPrint(64 - 3 * (int)strlen(message), 52, message);
+  } else {
+    gfxPrint(1, 52, "Up:Save  Down:Load");
+  }
+}
+
 FLASHMEM void XandNor::DrawPageDots() const {
   using namespace XandNorDefs;
   const int x0 = 64 - PAGE_COUNT * 4;
@@ -346,15 +465,29 @@ FLASHMEM void XandNor::DrawPageDots() const {
 }
 
 FLASHMEM void XandNor::OnUpButtonPress() {
+  if (preset_mode) { SaveSlot(slot_cursor); return; }
   page = (page + XandNorDefs::PAGE_COUNT - 1) % XandNorDefs::PAGE_COUNT;
 }
 
+FLASHMEM void XandNor::OnUpButtonLongPress() {
+  preset_mode = !preset_mode;
+  if (preset_mode) {
+    slot_cursor = active_slot >= 0 ? active_slot : 0;
+    message_frames = 0;
+  }
+}
+
 FLASHMEM void XandNor::OnDownButtonPress() {
+  if (preset_mode) { LoadSlot(slot_cursor); return; }
   page = (page + 1) % XandNorDefs::PAGE_COUNT;
 }
 
 FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
   using namespace XandNorDefs;
+  if (preset_mode) {
+    slot_cursor = constrain(slot_cursor + direction, 0, kNumSlots - 1);
+    return;
+  }
   if (page == PAGE_ROUTING) {
     // Step through fields, skipping the second channel of OUT and NOT.
     const int last = kNumOutputs * ROUTE_FIELDS - 1;
@@ -372,6 +505,10 @@ FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
 
 FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
   using namespace XandNorDefs;
+  if (preset_mode) {
+    slot_cursor = constrain(slot_cursor + direction, 0, kNumSlots - 1);
+    return;
+  }
   if (page == PAGE_ROUTING) {
     Route &r = routes[route_cursor / ROUTE_FIELDS];
     switch (route_cursor % ROUTE_FIELDS) {
@@ -412,8 +549,31 @@ FLASHMEM void XandNor::GetIOConfig(OC::IOConfig &ioconfig) const {
     ioconfig.outputs[o].set("Gate", OUTPUT_MODE_GATE);
 }
 
-FLASHMEM size_t XandNor::SaveAppData(util::StreamBufferWriter &) const { return 0; }
-FLASHMEM size_t XandNor::RestoreAppData(util::StreamBufferReader &) { return 0; }
+FLASHMEM size_t XandNor::SaveAppData(util::StreamBufferWriter &stream_buffer) const {
+  using namespace XandNorDefs;
+  PackedPatch working;
+  PackPatch(working);
+  stream_buffer.Write(kStorageVersion);
+  stream_buffer.Write(slot_used);
+  stream_buffer.Write(working);
+  for (int i = 0; i < kNumSlots; ++i) stream_buffer.Write(slots[i]);
+  return stream_buffer.written();
+}
+
+FLASHMEM size_t XandNor::RestoreAppData(util::StreamBufferReader &stream_buffer) {
+  using namespace XandNorDefs;
+  if (stream_buffer.Read<uint8_t>() != kStorageVersion) return stream_buffer.read();
+  const uint8_t used = stream_buffer.Read<uint8_t>();
+  PackedPatch working, stored[kNumSlots];
+  stream_buffer.Read(working);
+  for (int i = 0; i < kNumSlots; ++i) stream_buffer.Read(stored[i]);
+  if (stream_buffer.underflow()) return stream_buffer.read();
+
+  slot_used = used;
+  for (int i = 0; i < kNumSlots; ++i) slots[i] = stored[i];
+  UnpackPatch(working);
+  return stream_buffer.read();
+}
 
 FLASHMEM void XandNor::HandleAppEvent(OC::AppEvent event) {
   if (event == OC::APP_EVENT_RESUME) Resume();
@@ -428,9 +588,16 @@ FLASHMEM void XandNor::DrawScreensaver() const { BaseScreensaver(); }
 void XandNor::DrawDebugInfo() const {}
 
 FLASHMEM void XandNor::HandleButtonEvent(const UI::Event &event) {
-  if (event.type != UI::EVENT_BUTTON_PRESS) return;
-  if (event.control == OC::CONTROL_BUTTON_UP) OnUpButtonPress();
-  if (event.control == OC::CONTROL_BUTTON_DOWN) OnDownButtonPress();
+  if (event.control == OC::CONTROL_BUTTON_UP) {
+    if (event.type == UI::EVENT_BUTTON_LONG_PRESS) OnUpButtonLongPress();
+    if (event.type == UI::EVENT_BUTTON_PRESS) OnUpButtonPress();
+  }
+  if (event.control == OC::CONTROL_BUTTON_DOWN && event.type == UI::EVENT_BUTTON_PRESS)
+    OnDownButtonPress();
+  // Encoder press closes the preset overlay.
+  if (preset_mode && event.type == UI::EVENT_BUTTON_PRESS &&
+      (event.control == OC::CONTROL_BUTTON_L || event.control == OC::CONTROL_BUTTON_R))
+    preset_mode = false;
 }
 
 FLASHMEM void XandNor::HandleEncoderEvent(const UI::Event &event) {

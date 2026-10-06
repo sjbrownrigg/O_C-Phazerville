@@ -112,6 +112,13 @@ static constexpr uint8_t kStorageVersion = 1;
 static constexpr size_t kStorageSize = 2 + (1 + kNumSlots) * sizeof(PackedPatch);
 static constexpr int kMessageFrames = 40; // "Saved"/"Loaded" banner, ~1 s
 
+// Up/Down are labelled A/B on the Teensy 4.1 (ORN8) panel.
+#ifdef ARDUINO_TEENSY41
+static const char * const kPresetHint = "A:Save  B:Load";
+#else
+static const char * const kPresetHint = "Up:Save  Down:Load";
+#endif
+
 } // namespace XandNorDefs
 
 OC_APP_CLASS(XandNor, TWOCCS("XN"), "(X)AND (N)OR", "Gate Logic"),
@@ -451,7 +458,7 @@ FLASHMEM void XandNor::DrawPresets() const {
     --message_frames;
     gfxPrint(64 - 3 * (int)strlen(message), 52, message);
   } else {
-    gfxPrint(1, 52, "Up:Save  Down:Load");
+    gfxPrint(1, 52, kPresetHint);
   }
 }
 

@@ -22,8 +22,8 @@
 // routed gate outputs. Each output carries a channel's gate, its inverse, or a
 // logic function (AND, NAND, OR, NOR, XOR, XNOR) of two channels.
 //
-// All outputs are used: A-H on Teensy 4.1 builds, A-D on Teensy 4.0, matching
-// the panel labels.
+// Built for the Teensy 4.1 (ORN8) only: outputs A-H, CV inputs 1-8, matching
+// the panel labels. (The Teensy 4.0 build has no room for its preset area.)
 //
 // Only Controller() runs in the 16.7 kHz ISR. Everything else is defined out of
 // class and marked FLASHMEM: in-class definitions stay in RAM1 regardless.
@@ -86,11 +86,15 @@ static constexpr int kDefaultLengths[kNumChannels] = {11, 18, 21, 25}; // 10, 50
 // modules see a fresh edge. 4 ticks = 240 us.
 static constexpr uint8_t kDropTicks = 4;
 
-static constexpr uint32_t LengthTicks(int setting) {
-  return (kLengthUs[setting - 1] + OC_CORE_TIMER_RATE / 2) / OC_CORE_TIMER_RATE;
-}
+enum ChannelField { FIELD_SOURCE, FIELD_LENGTH, FIELD_CV, FIELD_DEPTH, FIELD_MODE, FIELD_COUNT };
 
-enum ChannelField { FIELD_SOURCE, FIELD_LENGTH, FIELD_COUNT };
+// How CV modulation is read: once per trigger, or continuously.
+enum CVMode : uint8_t { CV_SAMPLE, CV_TRACK, CV_MODE_COUNT };
+static const char * const kCVModeNames[CV_MODE_COUNT] = {"Sample", "Track"};
+
+// Length CV moves the length 8 steps per volt on the 10-steps-per-decade scale,
+// so +5 V at 100% depth spans the whole 1 ms - 10 s range.
+static constexpr int kStepsPerVolt = 8;
 
 // Routing page cursor: each output has three fields, the second channel only
 // for two-input functions.
@@ -99,15 +103,27 @@ enum RouteField { ROUTE_FN, ROUTE_A, ROUTE_B, ROUTE_FIELDS };
 static constexpr bool TwoInputs(uint8_t fn) { return fn != FN_OUT && fn != FN_NOT; }
 
 // A patch as stored in EEPROM and in the preset slots.
+// Per-channel settings beyond source and length. The reserved bytes hold
+// M5/M6 settings later without changing the stored size, which would make
+// the platform discard saved data.
+struct ChannelExtras {
+  uint16_t length_cv; // CVInputMap::Pack()
+  uint8_t cv_mode;
+  uint8_t reserved[13];
+};
+
 struct PackedPatch {
   uint32_t source[kNumChannels]; // DigitalInputMap::Pack()
   uint8_t length[kNumChannels];
   Route routes[8];
+  ChannelExtras extras[kNumChannels];
+  uint8_t reserved[20];
 };
+static_assert(sizeof(PackedPatch) == 128, "PackedPatch layout changed");
 
 static constexpr int kNumSlots = 8;
 // Bump when PackedPatch changes; stored data with another version is ignored.
-static constexpr uint8_t kStorageVersion = 1;
+static constexpr uint8_t kStorageVersion = 2;
 // version + slot-used mask + working patch + slots
 static constexpr size_t kStorageSize = 2 + (1 + kNumSlots) * sizeof(PackedPatch);
 static constexpr int kMessageFrames = 40; // "Saved"/"Loaded" banner, ~1 s
@@ -166,14 +182,19 @@ private:
   // Settings (stored in presets from M3)
   DigitalInputMap source[XandNorDefs::kNumChannels];
   uint8_t length[XandNorDefs::kNumChannels];
+  CVInputMap length_cv[XandNorDefs::kNumChannels];
+  uint8_t cv_mode[XandNorDefs::kNumChannels];
   XandNorDefs::Route routes[8];
+  XandNorDefs::PackedPatch reserved_store; // keeps unknown reserved bytes on resave
 
   // Engine state, owned by Controller()
   struct ChannelState {
-    uint32_t remaining; // ticks left in a finite gate
-    uint8_t drop;       // ticks left in a retrigger drop
-    bool active;        // the gate is running (high, or dropping before going high again)
+    uint32_t elapsed; // ticks since the gate started
+    uint32_t total;   // gate length in ticks, sampled at the trigger (Sample mode)
+    uint8_t drop;     // ticks left in a retrigger drop
+    bool active;      // the gate is running (high, or dropping before going high again)
   } state[XandNorDefs::kNumChannels];
+  uint32_t live_us[XandNorDefs::kNumChannels]; // CV-modulated length, for display
   bool chan_high[XandNorDefs::kNumChannels];
   bool out_high[XandNorDefs::kNumOutputs];
 
@@ -198,6 +219,7 @@ private:
     ChannelState &s = state[ch];
     const bool trig = source[ch].Clock(); // always called, to track edges
     const int len = length[ch];
+    live_us[ch] = ModulatedLengthUs(ch);
 
     if (len == kLengthThru) {
       s.active = false;
@@ -221,15 +243,37 @@ private:
     }
 
     if (s.active && len != kLengthInfinite) {
-      if (s.remaining == 0 || --s.remaining == 0) s.active = false;
+      const uint32_t total = (cv_mode[ch] == CV_TRACK) ? UsToTicks(live_us[ch]) : s.total;
+      if (++s.elapsed >= total) s.active = false;
     }
     return chan_high[ch] = s.active;
   }
 
   void StartGate(int ch, int len) {
-    using namespace XandNorDefs;
     state[ch].active = true;
-    state[ch].remaining = (len == kLengthInfinite) ? 0 : LengthTicks(len);
+    state[ch].elapsed = 0;
+    state[ch].total = UsToTicks(live_us[ch]);
+    (void)len;
+  }
+
+  static uint32_t UsToTicks(uint32_t us) {
+    return (us + OC_CORE_TIMER_RATE / 2) / OC_CORE_TIMER_RATE;
+  }
+
+  // Channel length in microseconds with its length CV applied. Thru and
+  // Infinite ignore CV; a finite length stays within 1 ms - 10 s, moving
+  // smoothly between table steps (exponentially, by linear interpolation).
+  uint32_t ModulatedLengthUs(int ch) const {
+    using namespace XandNorDefs;
+    const int len = length[ch];
+    if (len == kLengthThru || len == kLengthInfinite) return 0;
+    // position on the step scale in 1/256 steps
+    int32_t pos = len * 256 + length_cv[ch].In() * kStepsPerVolt * 256 / ONE_OCTAVE;
+    pos = constrain(pos, 256, kNumLengths * 256);
+    const int idx = pos >> 8;
+    if (idx >= kNumLengths) return kLengthUs[kNumLengths - 1];
+    const uint32_t lo = kLengthUs[idx - 1], hi = kLengthUs[idx];
+    return lo + ((hi - lo) * uint32_t(pos & 0xff) >> 8);
   }
 
   void DrawOverview() const;
@@ -237,6 +281,7 @@ private:
   void DrawRouting() const;
   void DrawPageDots() const;
   void PrintLength(int setting) const;
+  void PrintMicros(uint32_t us) const;
   void DrawFieldCursor(int x, int y, int w) const;
   void PrintRoute(int x, int y, const XandNorDefs::Route &r) const;
   void DrawPresets() const;
@@ -259,7 +304,10 @@ FLASHMEM void XandNor::LoadDefaults() {
   for (int ch = 0; ch < kNumChannels; ++ch) {
     source[ch].Unpack(t1.Pack());
     length[ch] = kDefaultLengths[ch];
+    length_cv[ch] = CVInputMap();
+    cv_mode[ch] = CV_SAMPLE;
   }
+  memset(&reserved_store, 0, sizeof(reserved_store));
   for (int o = 0; o < 8; ++o) routes[o] = kDefaultRoutes[o];
 }
 
@@ -267,7 +315,8 @@ FLASHMEM void XandNor::Start() {
   using namespace XandNorDefs;
   LoadDefaults();
   for (int ch = 0; ch < kNumChannels; ++ch) {
-    state[ch] = {0, 0, false};
+    state[ch] = {0, 0, 0, false};
+    live_us[ch] = 0;
     chan_high[ch] = false;
   }
   for (int o = 0; o < kNumOutputs; ++o) out_high[o] = false;
@@ -282,9 +331,12 @@ FLASHMEM void XandNor::Start() {
 
 FLASHMEM void XandNor::PackPatch(XandNorDefs::PackedPatch &p) const {
   using namespace XandNorDefs;
+  p = reserved_store; // carry reserved bytes through unchanged
   for (int ch = 0; ch < kNumChannels; ++ch) {
     p.source[ch] = source[ch].Pack();
     p.length[ch] = length[ch];
+    p.extras[ch].length_cv = length_cv[ch].Pack();
+    p.extras[ch].cv_mode = cv_mode[ch];
   }
   for (int o = 0; o < 8; ++o) p.routes[o] = routes[o];
 }
@@ -292,9 +344,12 @@ FLASHMEM void XandNor::PackPatch(XandNorDefs::PackedPatch &p) const {
 // Validates as it goes, so a corrupt or foreign slot can't index out of range.
 FLASHMEM void XandNor::UnpackPatch(const XandNorDefs::PackedPatch &p) {
   using namespace XandNorDefs;
+  reserved_store = p;
   for (int ch = 0; ch < kNumChannels; ++ch) {
     source[ch].Unpack(p.source[ch]);
     length[ch] = constrain(p.length[ch], kLengthThru, kLengthInfinite);
+    length_cv[ch].Unpack(p.extras[ch].length_cv);
+    cv_mode[ch] = constrain(p.extras[ch].cv_mode, 0, CV_MODE_COUNT - 1);
   }
   for (int o = 0; o < 8; ++o) {
     Route r = p.routes[o];
@@ -377,8 +432,11 @@ FLASHMEM void XandNor::PrintLength(int setting) const {
   using namespace XandNorDefs;
   if (setting == kLengthThru) { gfxPrint("Thru"); return; }
   if (setting == kLengthInfinite) { gfxPrint("Inf"); return; }
-  const uint32_t us = kLengthUs[setting - 1];
-  if (us < 10000) {        // 1.0 - 8.0 ms
+  PrintMicros(kLengthUs[setting - 1]);
+}
+
+FLASHMEM void XandNor::PrintMicros(uint32_t us) const {
+  if (us < 10000) {        // 1.0 - 9.9 ms
     gfxPrint(int(us / 1000)); gfxPrint("."); gfxPrint(int(us / 100 % 10)); gfxPrint("ms");
   } else if (us < 1000000) {
     gfxPrint(int(us / 1000)); gfxPrint("ms");
@@ -389,16 +447,40 @@ FLASHMEM void XandNor::PrintLength(int setting) const {
 
 FLASHMEM void XandNor::DrawChannelPage(int ch) const {
   using namespace XandNorDefs;
-  gfxPrint(1, 16, "Source:");
-  gfxPrint(52, 16, source[ch].InputName());
-  gfxPrint(1, 28, "Length:");
-  gfxPos(52, 28);
-  PrintLength(length[ch]);
-  DrawFieldCursor(51, cursor == FIELD_SOURCE ? 24 : 36, 48);
+  // Five rows; the label column is 8 characters, values start at x=52.
+  gfxPrint(1, 13, "Source:");
+  gfxPrint(52, 13, source[ch].InputName());
 
-  // Live gate indicator
-  gfxFrame(1, 42, 126, 8);
-  if (chan_high[ch]) gfxRect(2, 43, 124, 6);
+  gfxPrint(1, 22, "Length:");
+  gfxPos(52, 22);
+  PrintLength(length[ch]);
+  // With CV active, an arrow and the length it currently gives.
+  if (length_cv[ch].enabled() && live_us[ch]) {
+    gfxLine(86, 25, 90, 25);
+    gfxLine(89, 24, 89, 26);
+    gfxPos(94, 22);
+    PrintMicros(live_us[ch]);
+  }
+
+  gfxPrint(1, 31, "Len CV:");
+  gfxPrint(52, 31, length_cv[ch].InputName());
+
+  gfxPrint(1, 40, "Depth:");
+  const int tenths = Atten(length_cv[ch].attenuversion);
+  gfxPos(52, 40);
+  if (tenths < 0) gfxPrint("-");
+  gfxPrint(abs(tenths) / 10);
+  gfxPrint("%");
+
+  gfxPrint(1, 49, "CV mode:");
+  gfxPrint(52, 49, kCVModeNames[cv_mode[ch]]);
+
+  // Live gate: a small box at the right of the header area.
+  gfxFrame(121, 13, 6, 6);
+  if (chan_high[ch]) gfxRect(122, 14, 4, 4);
+
+  static constexpr int kRowY[FIELD_COUNT] = {13, 22, 31, 40, 49};
+  DrawFieldCursor(51, kRowY[cursor] + 8, cursor == FIELD_LENGTH ? 31 : 37);
 }
 
 // Draws "FN a b" from x, e.g. "XOR 3 4" for CH3 XOR CH4. Only channel numbers
@@ -547,10 +629,22 @@ FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
   }
   if (page < PAGE_CHANNEL_A || page > PAGE_CHANNEL_D) return;
   const int ch = page - PAGE_CHANNEL_A;
-  if (cursor == FIELD_SOURCE) {
-    source[ch].ChangeSource(direction);
-  } else {
-    length[ch] = constrain(length[ch] + direction, kLengthThru, kLengthInfinite);
+  switch (cursor) {
+    case FIELD_SOURCE:
+      source[ch].ChangeSource(direction);
+      break;
+    case FIELD_LENGTH:
+      length[ch] = constrain(length[ch] + direction, kLengthThru, kLengthInfinite);
+      break;
+    case FIELD_CV:
+      length_cv[ch].ChangeSource(direction);
+      break;
+    case FIELD_DEPTH:
+      length_cv[ch].attenuversion = constrain(length_cv[ch].attenuversion + direction, -127, 127);
+      break;
+    default:
+      cv_mode[ch] = constrain(cv_mode[ch] + direction, 0, CV_MODE_COUNT - 1);
+      break;
   }
 }
 

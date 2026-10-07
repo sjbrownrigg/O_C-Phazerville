@@ -158,6 +158,7 @@ public:
   void OnUpButtonPress();
   void OnUpButtonLongPress();
   void OnDownButtonPress();
+  void ToggleRouting();
   void OnLeftEncoderMove(int direction);
   void OnRightEncoderMove(int direction);
 
@@ -178,6 +179,7 @@ private:
 
   // UI
   int page = XandNorDefs::PAGE_OVERVIEW;
+  int page_before_routing = XandNorDefs::PAGE_OVERVIEW; // for the X shortcut
   int cursor = 0;       // channel pages
   int route_cursor = 0; // routing page: output * ROUTE_FIELDS + field
 
@@ -484,6 +486,18 @@ FLASHMEM void XandNor::OnUpButtonLongPress() {
   }
 }
 
+// X shortcut (Teensy 4.1): jump to Routing, or back to where you came from.
+FLASHMEM void XandNor::ToggleRouting() {
+  using namespace XandNorDefs;
+  preset_mode = false;
+  if (page == PAGE_ROUTING) {
+    page = page_before_routing;
+  } else {
+    page_before_routing = page;
+    page = PAGE_ROUTING;
+  }
+}
+
 FLASHMEM void XandNor::OnDownButtonPress() {
   if (preset_mode) { LoadSlot(slot_cursor); return; }
   page = (page + 1) % XandNorDefs::PAGE_COUNT;
@@ -601,6 +615,14 @@ FLASHMEM void XandNor::HandleButtonEvent(const UI::Event &event) {
   }
   if (event.control == OC::CONTROL_BUTTON_DOWN && event.type == UI::EVENT_BUTTON_PRESS)
     OnDownButtonPress();
+#ifdef ARDUINO_TEENSY41
+  // Extra ORN8 buttons: X toggles Routing, Y toggles the preset overlay.
+  // Z is left alone: the platform uses it as a modifier for its menus.
+  if (event.type == UI::EVENT_BUTTON_PRESS) {
+    if (event.control == OC::CONTROL_BUTTON_X) ToggleRouting();
+    if (event.control == OC::CONTROL_BUTTON_Y) OnUpButtonLongPress();
+  }
+#endif
   // Encoder press closes the preset overlay.
   if (preset_mode && event.type == UI::EVENT_BUTTON_PRESS &&
       (event.control == OC::CONTROL_BUTTON_L || event.control == OC::CONTROL_BUTTON_R))

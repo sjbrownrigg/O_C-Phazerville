@@ -303,8 +303,10 @@ private:
 FLASHMEM void XandNor::LoadDefaults() {
   using namespace XandNorDefs;
   // Unpack rather than Clear(): Clear() resets edge detection, so a high input
-  // would fire every channel once.
-  DigitalInputMap t1;
+  // would fire every channel once. t1 must be value-initialised: its Euclidean
+  // fields (e_length etc.) have no initialisers, and stack garbage there makes
+  // Clock()'s Euclidean filter swallow every trigger.
+  DigitalInputMap t1{};
   t1.SetGateInput(0);
   for (int ch = 0; ch < kNumChannels; ++ch) {
     source[ch].Unpack(t1.Pack());

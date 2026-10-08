@@ -149,6 +149,11 @@ public:
     using namespace XandNorDefs;
     bool gate[kNumChannels];
     for (int ch = 0; ch < kNumChannels; ++ch) gate[ch] = ProcessChannel(ch);
+    // The clock manager sets auto_reset when its clock starts, and every
+    // DigitalInputMap::Clock() resets its edge detection while it's set. The
+    // hosting app must clear it after one tick, as Quadrants and Hemisphere do;
+    // left set, every tick with a source high counts as a new trigger.
+    HS::clock_m.auto_reset = false;
 
     for (int o = 0; o < kNumOutputs; ++o) {
       const Route &r = routes[o];

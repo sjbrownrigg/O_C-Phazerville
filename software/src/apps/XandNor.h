@@ -596,9 +596,10 @@ FLASHMEM void XandNor::PrintDepth(int x, int y, const CVInputMap &m) const {
   gfxPrint("%");
 }
 
-// "/2" divides, "x2" multiplies; "/1" passes every trigger.
+// "/2" divides, "x2" multiplies. Every trigger passing shows as "x1", which
+// reads as a rate setting better than "/1".
 FLASHMEM void XandNor::PrintDiv(int x, int y, int steps) const {
-  gfxPrint(x, y, steps > 0 ? "/" : "x");
+  gfxPrint(x, y, steps > 1 ? "/" : "x");
   gfxPrint(abs(steps));
 }
 

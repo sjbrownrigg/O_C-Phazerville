@@ -125,13 +125,19 @@ static constexpr uint32_t kMinRatchetPeriod = 34;
 // +10 divider steps (2 per volt).
 static constexpr int kDivStepsPerVolt = 2;
 
-// The divider runs on one scale, ... x3, x2, /1, /2, /3 ...: index 0 is /1,
-// positive indices divide, negative multiply. The platform's steps value has
-// no 0 (it would silence the channel), so convert at the edges.
-static constexpr int kDivIndexMin = CLOCKDIV_MIN + 1; // x24
-static constexpr int kDivIndexMax = CLOCKDIV_MAX - 1; // /64
-static constexpr int DivIndexToSteps(int k) { return k >= 0 ? k + 1 : k - 1; }
-static constexpr int DivStepsToIndex(int s) { return s > 0 ? s - 1 : s + 1; }
+// The divider runs on one scale, ... /3, /2, /1, x2, x3 ...: index 0 is /1,
+// positive indices multiply and negative divide, so turning right or raising
+// the CV speeds the channel up, as on PAMs. The platform's steps value is the
+// other way round (positive divides) and has no 0, which would silence the
+// channel, so convert at the edges.
+static constexpr int kDivIndexMin = 1 - CLOCKDIV_MAX;  // /64
+static constexpr int kDivIndexMax = -1 - CLOCKDIV_MIN; // x24
+static constexpr int DivIndexToSteps(int k) { return k <= 0 ? 1 - k : -(k + 1); }
+static constexpr int DivStepsToIndex(int s) { return s > 0 ? 1 - s : -s - 1; }
+static_assert(DivIndexToSteps(0) == 1 && DivIndexToSteps(-1) == 2 && DivIndexToSteps(1) == -2 &&
+              DivIndexToSteps(kDivIndexMin) == CLOCKDIV_MAX && DivIndexToSteps(kDivIndexMax) == CLOCKDIV_MIN &&
+              DivStepsToIndex(DivIndexToSteps(-5)) == -5 && DivStepsToIndex(DivIndexToSteps(7)) == 7,
+              "divider index mapping");
 
 // How CV modulation is read: once per trigger, or continuously.
 enum CVMode : uint8_t { CV_SAMPLE, CV_TRACK, CV_MODE_COUNT };

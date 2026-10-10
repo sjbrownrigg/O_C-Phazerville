@@ -246,7 +246,7 @@ static constexpr uint8_t kDefaultTraces[kScopeTraces] = {1, 2, 3, 4, 9, 10, 11, 
 static constexpr uint16_t kScopeSpanMs[] = {0, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000};
 static constexpr int kScopeSpans = sizeof(kScopeSpanMs) / sizeof(kScopeSpanMs[0]);
 static constexpr uint16_t kScopeFreeSpanMs = 1000; // Auto with no tempo yet
-enum ScopeField { SCOPE_TRIG, SCOPE_SPAN, SCOPE_TRACE0, SCOPE_FIELDS = SCOPE_TRACE0 + kScopeTraces };
+enum ScopeField { SCOPE_MODE, SCOPE_TRIG, SCOPE_SPAN, SCOPE_TRACE0, SCOPE_FIELDS = SCOPE_TRACE0 + kScopeTraces };
 
 // Up/Down are labelled A/B on the Teensy 4.1 (ORN8) panel.
 #ifdef ARDUINO_TEENSY41
@@ -390,6 +390,8 @@ private:
   uint8_t scope_traces[XandNorDefs::kScopeTraces];
   int scope_cursor = 0;
   bool scope_hold = false;
+  bool scope_roll = true;         // Roll: scrolls continuously; else triggered sweeps
+  uint8_t scope_head = 0;         // Roll: next column to write, i.e. the oldest
   uint8_t scope_zoom = 0;         // 8 >> zoom traces on screen: 8, 4, 2, 1
   uint8_t scope_win = 0;          // first trace on screen
   uint16_t scope_cap[XandNorDefs::kScopeCols];  // being captured (Controller)
@@ -557,9 +559,11 @@ private:
       scope_last_trig = now;
     }
 
+    // Triggered: wait for the trigger (or start at once when free-running).
+    // Roll: never wait; columns run continuously into a ring.
     if (scope_col < 0) {
-      if (!trig && !free_run) return;
-      // Ticks per column for this sweep.
+      if (!scope_roll && !trig && !free_run) return;
+      // Ticks per column: the set span, or Auto = two trigger periods.
       uint32_t span = kScopeSpanMs[scope_span] * 16666u / 1000; // ms -> ticks
       if (!span) span = (scope_period && !free_run) ? 2 * scope_period : kScopeFreeSpanMs * 16666u / 1000;
       scope_col_ticks = max(span / kScopeCols, 1u);
@@ -568,14 +572,22 @@ private:
       scope_acc = 0;
     }
     scope_acc |= mask;
-    if (++scope_tick >= scope_col_ticks) {
-      scope_cap[scope_col++] = scope_acc;
-      scope_acc = 0;
-      scope_tick = 0;
-      if (scope_col >= kScopeCols) {
-        if (!scope_hold) memcpy(scope_disp, scope_cap, sizeof(scope_disp));
-        scope_col = -1;
+    if (++scope_tick < scope_col_ticks) return;
+
+    if (scope_roll) {
+      if (!scope_hold) {
+        scope_disp[scope_head] = scope_acc;
+        scope_head = (scope_head + 1) % kScopeCols;
       }
+      scope_col = -1; // recompute the column time each column
+      return;
+    }
+    scope_cap[scope_col++] = scope_acc;
+    scope_acc = 0;
+    scope_tick = 0;
+    if (scope_col >= kScopeCols) {
+      if (!scope_hold) memcpy(scope_disp, scope_cap, sizeof(scope_disp));
+      scope_col = -1;
     }
   }
 
@@ -617,7 +629,7 @@ private:
   void PackPatch(XandNorDefs::PackedPatch &p) const;
   void UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_global = false);
   void DrawMod() const;
-  void DrawScope() const;
+  void DrawScope(bool interactive = true) const;
   void ScopeFollowCursor();
   void DrawScrollBar(int scroll_pos, int rows) const;
   void SaveSlot(int slot);
@@ -690,6 +702,8 @@ FLASHMEM void XandNor::Start() {
   for (int i = 0; i < kScopeTraces; ++i) scope_traces[i] = kDefaultTraces[i];
   scope_cursor = 0;
   scope_hold = false;
+  scope_roll = true;
+  scope_head = 0;
   scope_zoom = 0;
   scope_win = 0;
   scope_col = -1;
@@ -995,32 +1009,41 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
 
 // Scope: a status line, then eight 7-pixel traces with labels. The selected
 // trace has a bar beside its label; the selected status field is underlined.
-FLASHMEM void XandNor::DrawScope() const {
+// The interactive page has a status line and marks the selected trace by
+// inverting its label; the screensaver gives the traces the whole screen.
+FLASHMEM void XandNor::DrawScope(bool interactive) const {
   using namespace XandNorDefs;
-  gfxPrint(1, 0, "T:");
-  gfxPrint(13, 0, scope_trig.InputName());
-  gfxPos(40, 0);
-  const uint16_t ms = kScopeSpanMs[scope_span];
-  if (!ms) gfxPrint("Auto");
-  else if (ms < 1000) { gfxPrint(ms); gfxPrint("ms"); }
-  else { gfxPrint(ms / 1000); gfxPrint("s"); }
-  gfxPrint(76, 0, kScopeTraces >> scope_zoom);
-  gfxPrint("ch");
-  if (scope_hold) gfxPrint(98, 0, "HOLD");
+  int top = 0;
+  if (interactive) {
+    top = 8;
+    gfxPrint(1, 0, scope_roll ? "Roll" : "Trig");
+    gfxPrint(30, 0, scope_trig.InputName());
+    gfxPos(54, 0);
+    const uint16_t ms = kScopeSpanMs[scope_span];
+    if (!ms) gfxPrint("Auto");
+    else if (ms < 1000) { gfxPrint(ms); gfxPrint("ms"); }
+    else { gfxPrint(ms / 1000); gfxPrint("s"); }
+    if (scope_hold) gfxPrint(98, 0, "HOLD");
+  }
 
-  // Zoom: 8, 4, 2 or 1 traces share the 56 pixels below the status line.
+  // Zoom: 8, 4, 2 or 1 traces share the space below the status line.
   const int visible = kScopeTraces >> scope_zoom;
-  const int h = 56 / visible;
+  const int h = (64 - top) / visible;
   for (int i = scope_win; i < scope_win + visible; ++i) {
-    const int y = 8 + (i - scope_win) * h;
+    const int y = top + (i - scope_win) * h;
     const int sig = scope_traces[i];
-    if (!sig) { gfxPrint(1, y, "--"); continue; }
-    if (sig <= kNumChannels) { gfxPrint(1, y, "C"); gfxPrint(sig); }
+    if (!sig) gfxPrint(1, y, "--");
+    else if (sig <= kNumChannels) { gfxPrint(1, y, "C"); gfxPrint(sig); }
     else { const char n[2] = { char('A' + sig - 1 - kNumChannels), '\0' }; gfxPrint(4, y, n); }
+    if (interactive && scope_cursor == SCOPE_TRACE0 + i) gfxInvert(0, y, 13, 7);
+    if (!sig) continue;
+
     const int bit = sig - 1; // C1-C4 = bits 0-3, A-H = bits 4-11
-    bool prev = scope_disp[0] >> bit & 1;
+    // Roll draws the ring oldest-first, so the newest column is on the right.
+    const int first = scope_roll ? scope_head : 0;
+    bool prev = scope_disp[first] >> bit & 1;
     for (int c = 0; c < kScopeCols; ++c) {
-      const bool hi = scope_disp[c] >> bit & 1;
+      const bool hi = scope_disp[(first + c) % kScopeCols] >> bit & 1;
       const int x = 14 + c;
       gfxPixel(x, hi ? y + 1 : y + h - 2);
       if (hi != prev) gfxLine(x, y + 1, x, y + h - 2);
@@ -1028,12 +1051,10 @@ FLASHMEM void XandNor::DrawScope() const {
     }
   }
 
-  if (scope_cursor == SCOPE_TRIG) DrawFieldCursor(12, 7, 19);
-  else if (scope_cursor == SCOPE_SPAN) DrawFieldCursor(39, 7, 31);
-  else {
-    const int y = 8 + (scope_cursor - SCOPE_TRACE0 - scope_win) * h;
-    gfxLine(12, y, 12, y + 6);
-  }
+  if (!interactive) return;
+  if (scope_cursor == SCOPE_MODE) DrawFieldCursor(0, 7, 25);
+  else if (scope_cursor == SCOPE_TRIG) DrawFieldCursor(29, 7, 19);
+  else if (scope_cursor == SCOPE_SPAN) DrawFieldCursor(53, 7, 31);
 }
 
 // Keeps the selected trace on screen when zoomed in, scrolling the window.
@@ -1229,7 +1250,10 @@ FLASHMEM static void AdjustDepth(CVInputMap &m, int direction) {
 FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
   using namespace XandNorDefs;
   if (page == PAGE_SCOPE && !preset_mode) {
-    if (scope_cursor == SCOPE_TRIG) {
+    if (scope_cursor == SCOPE_MODE) {
+      scope_roll = direction < 0; // Roll first, Trig to the right
+      scope_col = -1;
+    } else if (scope_cursor == SCOPE_TRIG) {
       scope_trig.ChangeSource(direction);
       scope_period = 0;
     } else if (scope_cursor == SCOPE_SPAN) {
@@ -1385,7 +1409,7 @@ FLASHMEM void XandNor::Loop() {
 FLASHMEM void XandNor::DrawMenu() const { BaseView(); }
 
 // The scope keeps sampling on every page, so it doubles as the screensaver.
-FLASHMEM void XandNor::DrawScreensaver() const { DrawScope(); }
+FLASHMEM void XandNor::DrawScreensaver() const { DrawScope(false); }
 
 void XandNor::DrawDebugInfo() const {}
 

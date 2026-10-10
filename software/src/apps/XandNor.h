@@ -92,6 +92,9 @@ enum ChannelField {
   FIELD_SOURCE, FIELD_DIV,
   FIELD_LENGTH,
   FIELD_LEN_CV, FIELD_LEN_DEPTH,
+  FIELD_LEN_MODE,
+  FIELD_DELAY,
+  FIELD_DELAY_CV, FIELD_DELAY_DEPTH,
   FIELD_PROB,
   FIELD_PROB_CV, FIELD_PROB_DEPTH,
   FIELD_RATCHET,
@@ -105,18 +108,31 @@ static constexpr FieldPos kFieldPos[FIELD_COUNT] = {
   {0, 52, 18}, {0, 76, 18},
   {1, 52, 31},
   {2, 52, 18}, {2, 88, 30},
-  {3, 52, 24},
-  {4, 52, 18}, {4, 88, 30},
-  {5, 52, 12},
-  {6, 52, 18}, {6, 88, 30},
+  {3, 52, 30},
+  {4, 52, 31},
+  {5, 52, 18}, {5, 88, 30},
+  {6, 52, 24},
   {7, 52, 18}, {7, 88, 30},
-  {8, 52, 37},
+  {8, 52, 12},
+  {9, 52, 18}, {9, 88, 30},
+  {10, 52, 18}, {10, 88, 30},
+  {11, 52, 37},
 };
-static constexpr int kChannelRows = 9;
+static constexpr int kChannelRows = 12;
 static constexpr int kVisibleRows = 5;
 static const char * const kRowLabels[kChannelRows] = {
-  "Source:", "Length:", "  CV:", "Prob:", "  CV:", "Ratchet:", "  CV:", "Div CV:", "CV mode:"
+  "Source:", "Length:", "  CV:", "Len by:", "Delay:", "  CV:",
+  "Prob:", "  CV:", "Ratchet:", "  CV:", "Div CV:", "CV mode:"
 };
+
+// Delay: 0 = off, else a step on the length scale. Up to kDelayQueue triggers
+// can wait at once, so a delay longer than the clock period still works.
+static constexpr int kDelayQueue = 4;
+// Clock-relative length: a percentage of the measured trigger period. Periods
+// over 10 s count as no tempo, and the time length applies instead.
+static constexpr uint8_t kDefaultClockPct = 50;
+static constexpr uint32_t kMaxPeriodTicks = 10 * 16666;
+static constexpr uint32_t kMinGateTicks = 17; // 1 ms
 
 // Ratchet: up to 8 pulses per gate, each high for at least 1 ms (17 ticks).
 static constexpr int kMaxRatchets = 8;
@@ -165,11 +181,14 @@ struct ChannelExtras {
   uint8_t prob_skip;  // 100 - probability
   uint16_t prob_cv;
   uint8_t ratchet_extra; // ratchets - 1
-  uint8_t reserved_a;
+  uint8_t delay;         // 0 = off
   uint16_t ratchet_cv;
   uint16_t div_cv;
-  uint8_t reserved[4];
+  uint16_t delay_cv;
+  uint8_t clock_pct;     // 0 = default (kDefaultClockPct)
+  uint8_t flags;         // bit 0: length is clock-relative
 };
+static constexpr uint8_t kFlagClockLength = 1;
 static_assert(sizeof(ChannelExtras) == 16, "ChannelExtras layout changed");
 
 struct PackedPatch {
@@ -255,6 +274,10 @@ private:
   CVInputMap ratchet_cv[XandNorDefs::kNumChannels];
   int8_t div_steps[XandNorDefs::kNumChannels];  // the set divider; source's own is CV-adjusted
   CVInputMap div_cv[XandNorDefs::kNumChannels];
+  uint8_t delay[XandNorDefs::kNumChannels];      // 0 = off, else a length-scale step
+  CVInputMap delay_cv[XandNorDefs::kNumChannels];
+  bool clock_length[XandNorDefs::kNumChannels];  // length is a % of the trigger period
+  uint8_t clock_pct[XandNorDefs::kNumChannels];  // 1-100%
   XandNorDefs::Route routes[8];
   XandNorDefs::PackedPatch reserved_store; // keeps unknown reserved bytes on resave
 
@@ -270,6 +293,12 @@ private:
   uint32_t live_us[XandNorDefs::kNumChannels];
   uint8_t live_prob[XandNorDefs::kNumChannels];
   uint8_t live_ratchets[XandNorDefs::kNumChannels];
+  uint32_t live_ticks[XandNorDefs::kNumChannels];  // gate length the engine uses
+  // Tempo and delay state, owned by Controller()
+  uint32_t last_clock[XandNorDefs::kNumChannels];
+  uint32_t period[XandNorDefs::kNumChannels];      // ticks between triggers; 0 = unknown
+  uint32_t delay_due[XandNorDefs::kNumChannels][XandNorDefs::kDelayQueue];
+  uint8_t delay_count[XandNorDefs::kNumChannels];
   bool chan_high[XandNorDefs::kNumChannels];
   bool out_high[XandNorDefs::kNumOutputs];
 
@@ -303,8 +332,24 @@ private:
     source[ch].div_mult.steps = div;
 
     bool trig = source[ch].Clock(); // always called, to track edges
-    const int len = length[ch];
+    const uint32_t now = OC::CORE::ticks;
+
+    // Tempo: the time between triggers, measured before probability drops any.
+    if (trig) {
+      const uint32_t p = now - last_clock[ch];
+      period[ch] = (last_clock[ch] && p <= kMaxPeriodTicks) ? p : 0;
+      last_clock[ch] = now;
+    }
+
+    // A clock-relative length is always finite; Thru and Inf are time settings.
+    const int len = clock_length[ch] ? 1 : length[ch];
     live_us[ch] = ModulatedLengthUs(ch);
+    live_ticks[ch] = UsToTicks(live_us[ch]);
+    if (clock_length[ch] && period[ch]) {
+      const int pct = constrain(clock_pct[ch] + length_cv[ch].In() * 100 / (5 * ONE_OCTAVE), 1, 100);
+      live_ticks[ch] = max(period[ch] * pct / 100, kMinGateTicks);
+      live_us[ch] = live_ticks[ch] * OC_CORE_TIMER_RATE;
+    }
     live_prob[ch] = constrain(prob[ch] + prob_cv[ch].In() * 100 / (5 * ONE_OCTAVE), 0, 100);
     live_ratchets[ch] = constrain(ratchets[ch] + ratchet_cv[ch].In() * (kMaxRatchets - 1) / (5 * ONE_OCTAVE),
                                   1, kMaxRatchets);
@@ -315,7 +360,21 @@ private:
     if (len == kLengthThru) {
       s.active = false;
       s.drop = 0;
+      delay_count[ch] = 0;
       return chan_high[ch] = source[ch].Gate();
+    }
+
+    // Delay: queue the trigger; it fires when due. The delay is read at the
+    // trigger. A full queue drops the newest.
+    const uint32_t delay_ticks = DelayTicks(ch);
+    if (trig && delay_ticks) {
+      if (delay_count[ch] < kDelayQueue) delay_due[ch][delay_count[ch]++] = now + delay_ticks;
+      trig = false;
+    }
+    if (delay_count[ch] && int32_t(now - delay_due[ch][0]) >= 0) {
+      for (int i = 1; i < delay_count[ch]; ++i) delay_due[ch][i - 1] = delay_due[ch][i];
+      --delay_count[ch];
+      trig = true;
     }
 
     if (trig) {
@@ -337,7 +396,7 @@ private:
     if (len == kLengthInfinite) return chan_high[ch] = true;
 
     const bool track = (cv_mode[ch] == CV_TRACK);
-    const uint32_t total = track ? UsToTicks(live_us[ch]) : s.total;
+    const uint32_t total = track ? live_ticks[ch] : s.total;
     const uint32_t t = s.elapsed++;
     if (t >= total) {
       s.active = false;
@@ -358,7 +417,7 @@ private:
   void StartGate(int ch, int len) {
     state[ch].active = true;
     state[ch].elapsed = 0;
-    state[ch].total = UsToTicks(live_us[ch]);
+    state[ch].total = live_ticks[ch];
     state[ch].ratchets = live_ratchets[ch];
     (void)len;
   }
@@ -372,11 +431,30 @@ private:
   // smoothly between table steps (exponentially, by linear interpolation).
   uint32_t ModulatedLengthUs(int ch) const {
     using namespace XandNorDefs;
-    const int len = length[ch];
+    int len = length[ch];
+    // Clock-relative with no tempo yet: fall back to the time setting, or the
+    // default if that's Thru or Inf.
+    if (clock_length[ch] && (len == kLengthThru || len == kLengthInfinite)) len = kDefaultLengths[ch];
     if (len == kLengthThru || len == kLengthInfinite) return 0;
     // position on the step scale in 1/256 steps
-    int32_t pos = len * 256 + length_cv[ch].In() * kStepsPerVolt * 256 / ONE_OCTAVE;
-    pos = constrain(pos, 256, kNumLengths * 256);
+    const int32_t pos = len * 256 + length_cv[ch].In() * kStepsPerVolt * 256 / ONE_OCTAVE;
+    return StepPosToUs(constrain(pos, 256, kNumLengths * 256));
+  }
+
+  // Delay in ticks with its CV applied; 0 = no delay. CV can open a delay
+  // from Off, and pull one down to Off.
+  uint32_t DelayTicks(int ch) const {
+    using namespace XandNorDefs;
+    if (!delay[ch] && !delay_cv[ch].enabled()) return 0;
+    const int32_t pos = delay[ch] * 256 + delay_cv[ch].In() * kStepsPerVolt * 256 / ONE_OCTAVE;
+    if (pos < 256) return 0;
+    return UsToTicks(StepPosToUs(min(pos, int32_t(kNumLengths * 256))));
+  }
+
+  // A position on the length scale in 1/256 steps (256 = 1 ms) to microseconds,
+  // interpolating linearly between table steps.
+  static uint32_t StepPosToUs(int32_t pos) {
+    using namespace XandNorDefs;
     const int idx = pos >> 8;
     if (idx >= kNumLengths) return kLengthUs[kNumLengths - 1];
     const uint32_t lo = kLengthUs[idx - 1], hi = kLengthUs[idx];
@@ -424,6 +502,10 @@ FLASHMEM void XandNor::LoadDefaults() {
     ratchet_cv[ch] = CVInputMap();
     div_steps[ch] = 1;
     div_cv[ch] = CVInputMap();
+    delay[ch] = 0;
+    delay_cv[ch] = CVInputMap();
+    clock_length[ch] = false;
+    clock_pct[ch] = kDefaultClockPct;
   }
   memset(&reserved_store, 0, sizeof(reserved_store));
   for (int o = 0; o < 8; ++o) routes[o] = kDefaultRoutes[o];
@@ -437,6 +519,10 @@ FLASHMEM void XandNor::Start() {
     live_us[ch] = 0;
     live_prob[ch] = 100;
     live_ratchets[ch] = 1;
+    live_ticks[ch] = 0;
+    last_clock[ch] = 0;
+    period[ch] = 0;
+    delay_count[ch] = 0;
     chan_high[ch] = false;
   }
   for (int o = 0; o < kNumOutputs; ++o) out_high[o] = false;
@@ -466,6 +552,10 @@ FLASHMEM void XandNor::PackPatch(XandNorDefs::PackedPatch &p) const {
     e.ratchet_extra = ratchets[ch] - 1;
     e.ratchet_cv = ratchet_cv[ch].Pack();
     e.div_cv = div_cv[ch].Pack();
+    e.delay = delay[ch];
+    e.delay_cv = delay_cv[ch].Pack();
+    e.clock_pct = clock_pct[ch];
+    e.flags = clock_length[ch] ? kFlagClockLength : 0;
   }
   for (int o = 0; o < 8; ++o) p.routes[o] = routes[o];
 }
@@ -493,6 +583,10 @@ FLASHMEM void XandNor::UnpackPatch(const XandNorDefs::PackedPatch &p) {
     ratchets[ch] = 1 + constrain(e.ratchet_extra, 0, kMaxRatchets - 1);
     UnpackCV(ratchet_cv[ch], e.ratchet_cv);
     UnpackCV(div_cv[ch], e.div_cv);
+    delay[ch] = constrain(e.delay, 0, kNumLengths);
+    UnpackCV(delay_cv[ch], e.delay_cv);
+    clock_pct[ch] = e.clock_pct ? constrain(e.clock_pct, 1, 100) : kDefaultClockPct;
+    clock_length[ch] = e.flags & kFlagClockLength;
   }
   for (int o = 0; o < 8; ++o) {
     Route r = p.routes[o];
@@ -630,8 +724,14 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
         break;
       case 1:
         gfxPos(52, y);
-        PrintLength(length[ch]);
-        if (length_cv[ch].enabled() && live_us[ch]) {
+        if (clock_length[ch]) {
+          gfxPrint(clock_pct[ch]);
+          gfxPrint("%");
+        } else {
+          PrintLength(length[ch]);
+        }
+        // The length in use: CV-adjusted, or the % of the measured period.
+        if ((length_cv[ch].enabled() || clock_length[ch]) && live_us[ch]) {
           DrawArrow(86, y);
           gfxPos(94, y);
           PrintMicros(live_us[ch]);
@@ -642,6 +742,26 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
         PrintDepth(88, y, length_cv[ch]);
         break;
       case 3:
+        gfxPrint(52, y, clock_length[ch] ? "Clock" : "Time");
+        break;
+      case 4: {
+        gfxPos(52, y);
+        if (delay[ch]) PrintMicros(kLengthUs[delay[ch] - 1]);
+        else gfxPrint("Off");
+        if (delay_cv[ch].enabled()) {
+          DrawArrow(86, y);
+          const uint32_t t = DelayTicks(ch);
+          gfxPos(94, y);
+          if (t) PrintMicros(t * OC_CORE_TIMER_RATE);
+          else gfxPrint("Off");
+        }
+        break;
+      }
+      case 5:
+        gfxPrint(52, y, delay_cv[ch].InputName());
+        PrintDepth(88, y, delay_cv[ch]);
+        break;
+      case 6:
         gfxPrint(52, y, prob[ch]);
         gfxPrint("%");
         if (prob_cv[ch].enabled()) {
@@ -650,22 +770,22 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
           gfxPrint("%");
         }
         break;
-      case 4:
+      case 7:
         gfxPrint(52, y, prob_cv[ch].InputName());
         PrintDepth(88, y, prob_cv[ch]);
         break;
-      case 5:
+      case 8:
         gfxPrint(52, y, ratchets[ch]);
         if (ratchet_cv[ch].enabled()) {
           DrawArrow(86, y);
           gfxPrint(94, y, live_ratchets[ch]);
         }
         break;
-      case 6:
+      case 9:
         gfxPrint(52, y, ratchet_cv[ch].InputName());
         PrintDepth(88, y, ratchet_cv[ch]);
         break;
-      case 7:
+      case 10:
         gfxPrint(52, y, div_cv[ch].InputName());
         PrintDepth(88, y, div_cv[ch]);
         break;
@@ -847,8 +967,17 @@ FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
         constrain(DivStepsToIndex(div_steps[ch]) + direction, kDivIndexMin, kDivIndexMax));
       break;
     case FIELD_LENGTH:
-      length[ch] = constrain(length[ch] + direction, kLengthThru, kLengthInfinite);
+      if (clock_length[ch]) clock_pct[ch] = constrain(clock_pct[ch] + direction, 1, 100);
+      else length[ch] = constrain(length[ch] + direction, kLengthThru, kLengthInfinite);
       break;
+    case FIELD_LEN_MODE:
+      clock_length[ch] = direction > 0;
+      break;
+    case FIELD_DELAY:
+      delay[ch] = constrain(delay[ch] + direction, 0, kNumLengths);
+      break;
+    case FIELD_DELAY_CV:   delay_cv[ch].ChangeSource(direction); break;
+    case FIELD_DELAY_DEPTH: AdjustDepth(delay_cv[ch], direction); break;
     case FIELD_LEN_CV:   length_cv[ch].ChangeSource(direction); break;
     case FIELD_LEN_DEPTH: AdjustDepth(length_cv[ch], direction); break;
     case FIELD_PROB:

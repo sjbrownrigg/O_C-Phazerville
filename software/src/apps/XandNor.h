@@ -249,6 +249,11 @@ static constexpr uint16_t kScopeFreeSpanMs = 1000; // Auto with no tempo yet
 // Roll + Auto: a fixed span, so the scroll speed never depends on the clock
 // (2 s is about one column per display frame).
 static constexpr uint16_t kRollAutoSpanMs = 2000;
+// Roll scrolls the picture; Sweep redraws it in place behind a moving gap;
+// Trig captures one sweep per trigger. Roll and Sweep capture continuously.
+enum ScopeMode : uint8_t { SCOPE_ROLL, SCOPE_SWEEP, SCOPE_TRIGGERED, SCOPE_MODES };
+static const char * const kScopeModeNames[SCOPE_MODES] = {"Roll", "Sweep", "Trig"};
+static constexpr int kSweepGap = 4; // blank columns ahead of the write point
 enum ScopeField { SCOPE_MODE, SCOPE_TRIG, SCOPE_SPAN, SCOPE_TRACE0, SCOPE_FIELDS = SCOPE_TRACE0 + kScopeTraces };
 
 // Up/Down are labelled A/B on the Teensy 4.1 (ORN8) panel.
@@ -393,7 +398,7 @@ private:
   uint8_t scope_traces[XandNorDefs::kScopeTraces];
   int scope_cursor = 0;
   bool scope_hold = false;
-  bool scope_roll = true;         // Roll: scrolls continuously; else triggered sweeps
+  uint8_t scope_mode = XandNorDefs::SCOPE_SWEEP;
   uint8_t scope_head = 0;         // Roll: next column to write, i.e. the oldest
   uint8_t scope_zoom = 0;         // 8 >> zoom traces on screen: 8, 4, 2, 1
   uint8_t scope_win = 0;          // first trace on screen
@@ -565,11 +570,11 @@ private:
     // Triggered: wait for the trigger (or start at once when free-running).
     // Roll: never wait; columns run continuously into a ring.
     if (scope_col < 0) {
-      if (!scope_roll && !trig && !free_run) return;
+      if (scope_mode == SCOPE_TRIGGERED && !trig && !free_run) return;
       // Ticks per column: the set span, or Auto = two trigger periods.
       uint32_t span = kScopeSpanMs[scope_span] * 16666u / 1000; // ms -> ticks
       if (!span) {
-        if (scope_roll) span = kRollAutoSpanMs * 16666u / 1000;
+        if (scope_mode == SCOPE_ROLL) span = kRollAutoSpanMs * 16666u / 1000;
         else span = (scope_period && !free_run) ? 2 * scope_period : kScopeFreeSpanMs * 16666u / 1000;
       }
       scope_col_ticks = max(span / kScopeCols, 1u);
@@ -580,7 +585,7 @@ private:
     scope_acc |= mask;
     if (++scope_tick < scope_col_ticks) return;
 
-    if (scope_roll) {
+    if (scope_mode != SCOPE_TRIGGERED) { // Roll and Sweep write a ring
       if (!scope_hold) {
         scope_disp[scope_head] = scope_acc;
         scope_head = (scope_head + 1) % kScopeCols;
@@ -708,7 +713,7 @@ FLASHMEM void XandNor::Start() {
   for (int i = 0; i < kScopeTraces; ++i) scope_traces[i] = kDefaultTraces[i];
   scope_cursor = 0;
   scope_hold = false;
-  scope_roll = true;
+  scope_mode = SCOPE_SWEEP;
   scope_head = 0;
   scope_zoom = 0;
   scope_win = 0;
@@ -1022,9 +1027,9 @@ FLASHMEM void XandNor::DrawScope(bool interactive) const {
   int top = 0;
   if (interactive) {
     top = 8;
-    gfxPrint(1, 0, scope_roll ? "Roll" : "Trig");
-    gfxPrint(30, 0, scope_trig.InputName());
-    gfxPos(54, 0);
+    gfxPrint(1, 0, kScopeModeNames[scope_mode]);
+    gfxPrint(36, 0, scope_trig.InputName());
+    gfxPos(60, 0);
     const uint16_t ms = kScopeSpanMs[scope_span];
     if (!ms) gfxPrint("Auto");
     else if (ms < 1000) { gfxPrint(ms); gfxPrint("ms"); }
@@ -1046,11 +1051,17 @@ FLASHMEM void XandNor::DrawScope(bool interactive) const {
 
     const int bit = sig - 1; // C1-C4 = bits 0-3, A-H = bits 4-11
     // Roll draws the ring oldest-first, so the newest column is on the right.
-    const int first = scope_roll ? scope_head : 0;
+    // Sweep draws it in place, leaving a gap just ahead of the write point.
+    const int first = scope_mode == SCOPE_ROLL ? scope_head : 0;
     bool prev = scope_disp[first] >> bit & 1;
     for (int c = 0; c < kScopeCols; ++c) {
       const bool hi = scope_disp[(first + c) % kScopeCols] >> bit & 1;
       const int x = 14 + c;
+      if (scope_mode == SCOPE_SWEEP &&
+          (c - scope_head + kScopeCols) % kScopeCols < kSweepGap) {
+        prev = hi; // no line across the gap
+        continue;
+      }
       gfxPixel(x, hi ? y + 1 : y + h - 2);
       if (hi != prev) gfxLine(x, y + 1, x, y + h - 2);
       prev = hi;
@@ -1058,9 +1069,9 @@ FLASHMEM void XandNor::DrawScope(bool interactive) const {
   }
 
   if (!interactive) return;
-  if (scope_cursor == SCOPE_MODE) DrawFieldCursor(0, 7, 25);
-  else if (scope_cursor == SCOPE_TRIG) DrawFieldCursor(29, 7, 19);
-  else if (scope_cursor == SCOPE_SPAN) DrawFieldCursor(53, 7, 31);
+  if (scope_cursor == SCOPE_MODE) DrawFieldCursor(0, 7, 31);
+  else if (scope_cursor == SCOPE_TRIG) DrawFieldCursor(35, 7, 19);
+  else if (scope_cursor == SCOPE_SPAN) DrawFieldCursor(59, 7, 31);
 }
 
 // Keeps the selected trace on screen when zoomed in, scrolling the window.
@@ -1257,7 +1268,7 @@ FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
   using namespace XandNorDefs;
   if (page == PAGE_SCOPE && !preset_mode) {
     if (scope_cursor == SCOPE_MODE) {
-      scope_roll = direction < 0; // Roll first, Trig to the right
+      scope_mode = constrain(scope_mode + direction, 0, SCOPE_MODES - 1);
       scope_col = -1;
     } else if (scope_cursor == SCOPE_TRIG) {
       scope_trig.ChangeSource(direction);

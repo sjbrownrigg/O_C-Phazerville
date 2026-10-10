@@ -39,6 +39,7 @@ enum Page {
   PAGE_CHANNEL_C,
   PAGE_CHANNEL_D,
   PAGE_ROUTING,
+  PAGE_CVMOD,
   PAGE_COUNT
 };
 
@@ -46,7 +47,7 @@ static constexpr int kNumChannels = 4;
 static constexpr int kNumOutputs = DAC_CHANNEL_COUNT;
 
 static const char * const kPageNames[PAGE_COUNT] = {
-  "Overview", "CH1", "CH2", "CH3", "CH4", "Routing"
+  "Overview", "CH1", "CH2", "CH3", "CH4", "Routing", "CV Mod"
 };
 
 // Output functions. OUT and NOT read one channel; the rest combine two.
@@ -119,6 +120,21 @@ static constexpr FieldPos kFieldPos[FIELD_COUNT] = {
   {11, 52, 37},
 };
 static constexpr int kChannelRows = 12;
+
+// CV Mod page: outputs A-H (function CV source and depth, with the function in
+// use), then the preset CV and its load trigger.
+enum ModField {
+  MOD_FN_CV,          // + 2 * output: source; + 1: depth
+  MOD_PRESET_CV = 16, MOD_PRESET_DEPTH, MOD_PRESET_TRIG,
+  MOD_COUNT
+};
+static constexpr int kModRows = 10;
+static constexpr FieldPos ModFieldPos(int f) {
+  return f < MOD_PRESET_CV ? FieldPos{uint8_t(f / 2), uint8_t(f % 2 ? 40 : 14), uint8_t(f % 2 ? 30 : 18)}
+       : f == MOD_PRESET_CV ? FieldPos{8, 52, 18}
+       : f == MOD_PRESET_DEPTH ? FieldPos{8, 88, 30}
+       : FieldPos{9, 52, 18};
+}
 static constexpr int kVisibleRows = 5;
 static const char * const kRowLabels[kChannelRows] = {
   "Source:", "Length:", "  CV:", "Len by:", "Delay:", "  CV:",
@@ -186,9 +202,16 @@ struct ChannelExtras {
   uint16_t div_cv;
   uint16_t delay_cv;
   uint8_t clock_pct;     // 0 = default (kDefaultClockPct)
-  uint8_t flags;         // bit 0: length is clock-relative
+  uint8_t flags;         // bit 0: clock-relative length; bit 1: level mode;
+                         // bits 2-7: level threshold in 0.1 V, 0 = default
 };
 static constexpr uint8_t kFlagClockLength = 1;
+static constexpr uint8_t kFlagLevel = 2;
+// Level mode: the channel is high while its source is above a threshold, with
+// 0.2 V of hysteresis, so an LFO becomes a gate whose width follows its shape.
+static constexpr uint8_t kDefaultThresholdDv = 12; // 1.2 V, near the platform's 1.25 V
+static constexpr uint8_t kMaxThresholdDv = 63;
+static constexpr int kHysteresis = ONE_OCTAVE / 10; // 0.1 V each side
 static_assert(sizeof(ChannelExtras) == 16, "ChannelExtras layout changed");
 
 struct PackedPatch {
@@ -196,7 +219,11 @@ struct PackedPatch {
   uint8_t length[kNumChannels];
   Route routes[8];
   ChannelExtras extras[kNumChannels];
-  uint8_t reserved[20];
+  // Patch-wide settings, in what was the 20-byte reserve.
+  uint16_t fn_cv[8];   // per output: CV moves the logic function
+  uint16_t preset_cv;  // CV picks the preset slot to load (global, see below)
+  uint8_t preset_trig; // DigitalInputMap source byte: the trigger that loads it
+  uint8_t reserved;
 };
 static_assert(sizeof(PackedPatch) == 128, "PackedPatch layout changed");
 
@@ -228,6 +255,15 @@ public:
     using namespace XandNorDefs;
     bool gate[kNumChannels];
     for (int ch = 0; ch < kNumChannels; ++ch) gate[ch] = ProcessChannel(ch);
+
+    // Preset by CV: the trigger picks a slot (by CV, or the next used slot
+    // with no CV); Loop() loads it outside the interrupt.
+    if (preset_trig.Clock()) {
+      pending_slot = preset_cv.enabled()
+        ? constrain(preset_cv.In() * kNumSlots / (5 * ONE_OCTAVE), 0, kNumSlots - 1)
+        : -2;
+    }
+
     // The clock manager sets auto_reset when its clock starts, and every
     // DigitalInputMap::Clock() resets its edge detection while it's set. The
     // hosting app must clear it after one tick, as Quadrants and Hemisphere do;
@@ -237,8 +273,12 @@ public:
     for (int o = 0; o < kNumOutputs; ++o) {
       const Route &r = routes[o];
       const bool a = gate[r.a], b = gate[r.b];
+      // Function by CV: +5 V at 100% depth moves through all eight functions.
+      int fn = r.fn;
+      if (fn_cv[o].enabled()) fn = constrain(fn + fn_cv[o].In() * FN_COUNT / (5 * ONE_OCTAVE), 0, FN_COUNT - 1);
+      live_fn[o] = fn;
       bool v;
-      switch (r.fn) {
+      switch (fn) {
         case FN_NOT:  v = !a; break;
         case FN_AND:  v = a && b; break;
         case FN_NAND: v = !(a && b); break;
@@ -278,6 +318,14 @@ private:
   CVInputMap delay_cv[XandNorDefs::kNumChannels];
   bool clock_length[XandNorDefs::kNumChannels];  // length is a % of the trigger period
   uint8_t clock_pct[XandNorDefs::kNumChannels];  // 1-100%
+  bool level[XandNorDefs::kNumChannels];         // follow the source level, not edges
+  uint8_t threshold_dv[XandNorDefs::kNumChannels]; // level threshold, 0.1 V units
+  CVInputMap fn_cv[8];
+  // Preset by CV. Global: stored with every patch, but loading a slot leaves it
+  // alone, so a CV-driven load can't change what drives the next one.
+  CVInputMap preset_cv;
+  DigitalInputMap preset_trig;
+  volatile int8_t pending_slot = -1; // set by Controller(), loaded by Loop(); -2 = next
   XandNorDefs::Route routes[8];
   XandNorDefs::PackedPatch reserved_store; // keeps unknown reserved bytes on resave
 
@@ -299,6 +347,8 @@ private:
   uint32_t period[XandNorDefs::kNumChannels];      // ticks between triggers; 0 = unknown
   uint32_t delay_due[XandNorDefs::kNumChannels][XandNorDefs::kDelayQueue];
   uint8_t delay_count[XandNorDefs::kNumChannels];
+  bool level_high[XandNorDefs::kNumChannels];
+  uint8_t live_fn[8];
   bool chan_high[XandNorDefs::kNumChannels];
   bool out_high[XandNorDefs::kNumOutputs];
 
@@ -308,6 +358,8 @@ private:
   int cursor = 0;       // channel pages
   int scroll = 0;       // first visible channel-page row
   int route_cursor = 0; // routing page: output * ROUTE_FIELDS + field
+  int mod_cursor = 0;   // CV Mod page
+  int mod_scroll = 0;
 
   // Presets
   XandNorDefs::PackedPatch slots[XandNorDefs::kNumSlots];
@@ -361,6 +413,13 @@ private:
       s.active = false;
       s.drop = 0;
       delay_count[ch] = 0;
+      if (level[ch]) {
+        const int v = LevelIn(ch);
+        const int thr = threshold_dv[ch] * ONE_OCTAVE / 10;
+        if (v > thr + kHysteresis) level_high[ch] = true;
+        else if (v < thr - kHysteresis) level_high[ch] = false;
+        return chan_high[ch] = level_high[ch];
+      }
       return chan_high[ch] = source[ch].Gate();
     }
 
@@ -451,6 +510,17 @@ private:
     return UsToTicks(StepPosToUs(min(pos, int32_t(kNumLengths * 256))));
   }
 
+  // The level of a channel's source, for level mode: the CV of an input or
+  // output, or 5 V / 0 V for a trigger or MIDI source.
+  int LevelIn(int ch) const {
+    const int idx = source[ch].index();
+    switch (source[ch].source_type()) {
+      case DigitalInputMap::TYPE_ADC: return HS::frame.In(idx);
+      case DigitalInputMap::TYPE_DAC: return HS::frame.ViewOut(idx);
+      default: return source[ch].Gate() ? 5 * ONE_OCTAVE : 0;
+    }
+  }
+
   // A position on the length scale in 1/256 steps (256 = 1 ms) to microseconds,
   // interpolating linearly between table steps.
   static uint32_t StepPosToUs(int32_t pos) {
@@ -476,7 +546,9 @@ private:
 
   void LoadDefaults();
   void PackPatch(XandNorDefs::PackedPatch &p) const;
-  void UnpackPatch(const XandNorDefs::PackedPatch &p);
+  void UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_global = false);
+  void DrawMod() const;
+  void DrawScrollBar(int scroll_pos, int rows) const;
   void SaveSlot(int slot);
   void LoadSlot(int slot);
 };
@@ -506,7 +578,10 @@ FLASHMEM void XandNor::LoadDefaults() {
     delay_cv[ch] = CVInputMap();
     clock_length[ch] = false;
     clock_pct[ch] = kDefaultClockPct;
+    level[ch] = false;
+    threshold_dv[ch] = kDefaultThresholdDv;
   }
+  for (int o = 0; o < 8; ++o) fn_cv[o] = CVInputMap();
   memset(&reserved_store, 0, sizeof(reserved_store));
   for (int o = 0; o < 8; ++o) routes[o] = kDefaultRoutes[o];
 }
@@ -523,6 +598,7 @@ FLASHMEM void XandNor::Start() {
     last_clock[ch] = 0;
     period[ch] = 0;
     delay_count[ch] = 0;
+    level_high[ch] = false;
     chan_high[ch] = false;
   }
   for (int o = 0; o < kNumOutputs; ++o) out_high[o] = false;
@@ -532,6 +608,12 @@ FLASHMEM void XandNor::Start() {
   cursor = 0;
   scroll = 0;
   route_cursor = 0;
+  mod_cursor = 0;
+  mod_scroll = 0;
+  for (int o = 0; o < 8; ++o) live_fn[o] = routes[o].fn;
+  preset_cv = CVInputMap();
+  preset_trig = DigitalInputMap{};
+  pending_slot = -1;
 }
 
 // -- Presets -----------------------------------------------------------------
@@ -555,8 +637,12 @@ FLASHMEM void XandNor::PackPatch(XandNorDefs::PackedPatch &p) const {
     e.delay = delay[ch];
     e.delay_cv = delay_cv[ch].Pack();
     e.clock_pct = clock_pct[ch];
-    e.flags = clock_length[ch] ? kFlagClockLength : 0;
+    e.flags = (clock_length[ch] ? kFlagClockLength : 0) | (level[ch] ? kFlagLevel : 0)
+            | uint8_t(threshold_dv[ch] << 2);
   }
+  for (int o = 0; o < 8; ++o) p.fn_cv[o] = fn_cv[o].Pack();
+  p.preset_cv = preset_cv.Pack();
+  p.preset_trig = preset_trig.Pack() & 0xff; // source only
   for (int o = 0; o < 8; ++o) p.routes[o] = routes[o];
 }
 
@@ -568,7 +654,7 @@ FLASHMEM static void UnpackCV(CVInputMap &m, uint16_t packed) {
 }
 
 // Validates as it goes, so a corrupt or foreign slot can't index out of range.
-FLASHMEM void XandNor::UnpackPatch(const XandNorDefs::PackedPatch &p) {
+FLASHMEM void XandNor::UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_global) {
   using namespace XandNorDefs;
   reserved_store = p;
   for (int ch = 0; ch < kNumChannels; ++ch) {
@@ -587,6 +673,16 @@ FLASHMEM void XandNor::UnpackPatch(const XandNorDefs::PackedPatch &p) {
     UnpackCV(delay_cv[ch], e.delay_cv);
     clock_pct[ch] = e.clock_pct ? constrain(e.clock_pct, 1, 100) : kDefaultClockPct;
     clock_length[ch] = e.flags & kFlagClockLength;
+    level[ch] = e.flags & kFlagLevel;
+    threshold_dv[ch] = (e.flags >> 2) ? (e.flags >> 2) : kDefaultThresholdDv;
+    if (level[ch]) length[ch] = kLengthThru; // level mode lives below Thru
+  }
+  for (int o = 0; o < 8; ++o) UnpackCV(fn_cv[o], p.fn_cv[o]);
+  if (with_global) {
+    UnpackCV(preset_cv, p.preset_cv);
+    DigitalInputMap t{}; // value-initialised: see LoadDefaults()
+    t.Unpack(p.preset_trig);
+    preset_trig = t;
   }
   for (int o = 0; o < 8; ++o) {
     Route r = p.routes[o];
@@ -628,6 +724,7 @@ FLASHMEM void XandNor::View() const {
   switch (page) {
     case PAGE_OVERVIEW: DrawOverview(); break;
     case PAGE_ROUTING:  DrawRouting(); break;
+    case PAGE_CVMOD:      DrawMod(); break;
     default:            DrawChannelPage(page - PAGE_CHANNEL_A); break;
   }
   DrawPageDots();
@@ -712,7 +809,8 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
   // A scrolling list: rows scroll so the cursor's row stays in view.
   for (int r = scroll; r < scroll + kVisibleRows && r < kChannelRows; ++r) {
     const int y = 13 + (r - scroll) * 9;
-    gfxPrint(1, y, kRowLabels[r]);
+    // In level mode the "Len by" row sets the threshold instead.
+    gfxPrint(1, y, (r == 3 && level[ch]) ? "Thresh:" : kRowLabels[r]);
     switch (r) {
       case 0:
         gfxPrint(52, y, source[ch].InputName());
@@ -727,6 +825,8 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
         if (clock_length[ch]) {
           gfxPrint(clock_pct[ch]);
           gfxPrint("%");
+        } else if (level[ch]) {
+          gfxPrint("Level");
         } else {
           PrintLength(length[ch]);
         }
@@ -742,7 +842,14 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
         PrintDepth(88, y, length_cv[ch]);
         break;
       case 3:
-        gfxPrint(52, y, clock_length[ch] ? "Clock" : "Time");
+        if (level[ch]) {
+          gfxPrint(52, y, threshold_dv[ch] / 10);
+          gfxPrint(".");
+          gfxPrint(threshold_dv[ch] % 10);
+          gfxPrint("V");
+        } else {
+          gfxPrint(52, y, clock_length[ch] ? "Clock" : "Time");
+        }
         break;
       case 4: {
         gfxPos(52, y);
@@ -795,14 +902,47 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
     }
   }
 
-  // Scroll bar: a dotted track with a solid thumb.
-  gfxDottedLine(126, 12, 126, 56);
-  const int thumb = 45 * kVisibleRows / kChannelRows;
-  const int ty = 12 + (45 - thumb) * scroll / (kChannelRows - kVisibleRows);
-  gfxRect(125, ty, 3, thumb);
+  DrawScrollBar(scroll, kChannelRows);
 
   const FieldPos &f = kFieldPos[cursor];
   DrawFieldCursor(f.x - 1, 13 + (f.row - scroll) * 9 + 8, f.w);
+}
+
+// Scroll bar: a dotted track with a solid thumb.
+FLASHMEM void XandNor::DrawScrollBar(int scroll_pos, int rows) const {
+  using namespace XandNorDefs;
+  gfxDottedLine(126, 12, 126, 56);
+  const int thumb = 45 * kVisibleRows / rows;
+  const int ty = 12 + (45 - thumb) * scroll_pos / (rows - kVisibleRows);
+  gfxRect(125, ty, 3, thumb);
+}
+
+FLASHMEM void XandNor::DrawMod() const {
+  using namespace XandNorDefs;
+  for (int r = mod_scroll; r < mod_scroll + kVisibleRows && r < kModRows; ++r) {
+    const int y = 13 + (r - mod_scroll) * 9;
+    if (r < 8) {
+      // "A  C 3  100%  > XOR": output, function CV, depth, function in use
+      const char name[2] = { char('A' + r), '\0' };
+      gfxPrint(1, y, name);
+      gfxPrint(14, y, fn_cv[r].InputName());
+      PrintDepth(40, y, fn_cv[r]);
+      if (fn_cv[r].enabled()) DrawArrow(74, y);
+      gfxPrint(82, y, kFunctionNames[live_fn[r]]);
+    } else if (r == 8) {
+      gfxPrint(1, y, "Preset:");
+      gfxPrint(52, y, preset_cv.InputName());
+      PrintDepth(88, y, preset_cv);
+    } else {
+      gfxPrint(1, y, "Load on:");
+      gfxPrint(52, y, preset_trig.InputName());
+      // With no preset CV, each trigger steps to the next used slot.
+      if (!preset_cv.enabled() && (preset_trig.Pack() & 0xff)) gfxPrint(76, y, "next");
+    }
+  }
+  DrawScrollBar(mod_scroll, kModRows);
+  const FieldPos f = ModFieldPos(mod_cursor);
+  DrawFieldCursor(f.x - 1, 13 + (f.row - mod_scroll) * 9 + 8, f.w);
 }
 
 // Draws "FN a b" from x, e.g. "XOR 3 4" for CH3 XOR CH4. Only channel numbers
@@ -924,6 +1064,13 @@ FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
     if (c >= 0 && c <= last) route_cursor = c;
     return;
   }
+  if (page == PAGE_CVMOD) {
+    mod_cursor = constrain(mod_cursor + direction, 0, MOD_COUNT - 1);
+    const int row = ModFieldPos(mod_cursor).row;
+    if (row < mod_scroll) mod_scroll = row;
+    if (row >= mod_scroll + kVisibleRows) mod_scroll = row - kVisibleRows + 1;
+    return;
+  }
   if (page < PAGE_CHANNEL_A || page > PAGE_CHANNEL_D) return;
   cursor = constrain(cursor + direction, 0, FIELD_COUNT - 1);
   const int row = kFieldPos[cursor].row;
@@ -937,6 +1084,20 @@ FLASHMEM static void AdjustDepth(CVInputMap &m, int direction) {
 
 FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
   using namespace XandNorDefs;
+  if (page == PAGE_CVMOD && !preset_mode) {
+    if (mod_cursor < MOD_PRESET_CV) {
+      CVInputMap &m = fn_cv[mod_cursor / 2];
+      if (mod_cursor % 2) AdjustDepth(m, direction);
+      else m.ChangeSource(direction);
+    } else if (mod_cursor == MOD_PRESET_CV) {
+      preset_cv.ChangeSource(direction);
+    } else if (mod_cursor == MOD_PRESET_DEPTH) {
+      AdjustDepth(preset_cv, direction);
+    } else {
+      preset_trig.ChangeSource(direction);
+    }
+    return;
+  }
   if (preset_mode) {
     slot_cursor = constrain(slot_cursor + direction, 0, kNumSlots - 1);
     return;
@@ -967,11 +1128,19 @@ FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
         constrain(DivStepsToIndex(div_steps[ch]) + direction, kDivIndexMin, kDivIndexMax));
       break;
     case FIELD_LENGTH:
-      if (clock_length[ch]) clock_pct[ch] = constrain(clock_pct[ch] + direction, 1, 100);
-      else length[ch] = constrain(length[ch] + direction, kLengthThru, kLengthInfinite);
+      if (clock_length[ch]) {
+        clock_pct[ch] = constrain(clock_pct[ch] + direction, 1, 100);
+      } else if (level[ch]) {
+        if (direction > 0) level[ch] = false; // back up to Thru
+      } else if (length[ch] == kLengthThru && direction < 0) {
+        level[ch] = true;                     // Level sits below Thru
+      } else {
+        length[ch] = constrain(length[ch] + direction, kLengthThru, kLengthInfinite);
+      }
       break;
     case FIELD_LEN_MODE:
-      clock_length[ch] = direction > 0;
+      if (level[ch]) threshold_dv[ch] = constrain(threshold_dv[ch] + direction, 1, kMaxThresholdDv);
+      else clock_length[ch] = direction > 0;
       break;
     case FIELD_DELAY:
       delay[ch] = constrain(delay[ch] + direction, 0, kNumLengths);
@@ -1036,7 +1205,7 @@ FLASHMEM size_t XandNor::RestoreAppData(util::StreamBufferReader &stream_buffer)
 
   slot_used = used;
   for (int i = 0; i < kNumSlots; ++i) slots[i] = stored[i];
-  UnpackPatch(working);
+  UnpackPatch(working, true);
   return stream_buffer.read();
 }
 
@@ -1044,7 +1213,18 @@ FLASHMEM void XandNor::HandleAppEvent(OC::AppEvent event) {
   if (event == OC::APP_EVENT_RESUME) Resume();
 }
 
-void XandNor::Loop() {}
+// Applies a preset load requested by the preset trigger, outside the interrupt.
+FLASHMEM void XandNor::Loop() {
+  int slot = pending_slot;
+  if (slot == -1) return;
+  pending_slot = -1;
+  if (slot == -2) { // next used slot after the active one
+    if (!slot_used) return;
+    slot = active_slot;
+    do { slot = (slot + 1) % XandNorDefs::kNumSlots; } while (!(slot_used & (1 << slot)));
+  }
+  if (slot_used & (1 << slot)) LoadSlot(slot); // an empty slot is ignored
+}
 
 FLASHMEM void XandNor::DrawMenu() const { BaseView(); }
 

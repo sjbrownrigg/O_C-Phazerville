@@ -390,6 +390,8 @@ private:
   uint8_t scope_traces[XandNorDefs::kScopeTraces];
   int scope_cursor = 0;
   bool scope_hold = false;
+  uint8_t scope_zoom = 0;         // 8 >> zoom traces on screen: 8, 4, 2, 1
+  uint8_t scope_win = 0;          // first trace on screen
   uint16_t scope_cap[XandNorDefs::kScopeCols];  // being captured (Controller)
   uint16_t scope_disp[XandNorDefs::kScopeCols]; // last complete sweep (display)
   int scope_col = -1;             // -1 = waiting for a trigger
@@ -616,6 +618,7 @@ private:
   void UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_global = false);
   void DrawMod() const;
   void DrawScope() const;
+  void ScopeFollowCursor();
   void DrawScrollBar(int scroll_pos, int rows) const;
   void SaveSlot(int slot);
   void LoadSlot(int slot);
@@ -687,6 +690,8 @@ FLASHMEM void XandNor::Start() {
   for (int i = 0; i < kScopeTraces; ++i) scope_traces[i] = kDefaultTraces[i];
   scope_cursor = 0;
   scope_hold = false;
+  scope_zoom = 0;
+  scope_win = 0;
   scope_col = -1;
   memset(scope_disp, 0, sizeof(scope_disp));
   pending_slot = -1;
@@ -999,10 +1004,15 @@ FLASHMEM void XandNor::DrawScope() const {
   if (!ms) gfxPrint("Auto");
   else if (ms < 1000) { gfxPrint(ms); gfxPrint("ms"); }
   else { gfxPrint(ms / 1000); gfxPrint("s"); }
+  gfxPrint(76, 0, kScopeTraces >> scope_zoom);
+  gfxPrint("ch");
   if (scope_hold) gfxPrint(98, 0, "HOLD");
 
-  for (int i = 0; i < kScopeTraces; ++i) {
-    const int y = 8 + i * 7;
+  // Zoom: 8, 4, 2 or 1 traces share the 56 pixels below the status line.
+  const int visible = kScopeTraces >> scope_zoom;
+  const int h = 56 / visible;
+  for (int i = scope_win; i < scope_win + visible; ++i) {
+    const int y = 8 + (i - scope_win) * h;
     const int sig = scope_traces[i];
     if (!sig) { gfxPrint(1, y, "--"); continue; }
     if (sig <= kNumChannels) { gfxPrint(1, y, "C"); gfxPrint(sig); }
@@ -1012,8 +1022,8 @@ FLASHMEM void XandNor::DrawScope() const {
     for (int c = 0; c < kScopeCols; ++c) {
       const bool hi = scope_disp[c] >> bit & 1;
       const int x = 14 + c;
-      gfxPixel(x, hi ? y + 1 : y + 5);
-      if (hi != prev) gfxLine(x, y + 1, x, y + 5);
+      gfxPixel(x, hi ? y + 1 : y + h - 2);
+      if (hi != prev) gfxLine(x, y + 1, x, y + h - 2);
       prev = hi;
     }
   }
@@ -1021,9 +1031,20 @@ FLASHMEM void XandNor::DrawScope() const {
   if (scope_cursor == SCOPE_TRIG) DrawFieldCursor(12, 7, 19);
   else if (scope_cursor == SCOPE_SPAN) DrawFieldCursor(39, 7, 31);
   else {
-    const int y = 8 + (scope_cursor - SCOPE_TRACE0) * 7;
+    const int y = 8 + (scope_cursor - SCOPE_TRACE0 - scope_win) * h;
     gfxLine(12, y, 12, y + 6);
   }
+}
+
+// Keeps the selected trace on screen when zoomed in, scrolling the window.
+FLASHMEM void XandNor::ScopeFollowCursor() {
+  using namespace XandNorDefs;
+  const int visible = kScopeTraces >> scope_zoom;
+  scope_win = constrain(scope_win, 0, kScopeTraces - visible);
+  if (scope_cursor < SCOPE_TRACE0) return;
+  const int t = scope_cursor - SCOPE_TRACE0;
+  if (t < scope_win) scope_win = t;
+  if (t >= scope_win + visible) scope_win = t - visible + 1;
 }
 
 // Scroll bar: a dotted track with a solid thumb.
@@ -1184,6 +1205,7 @@ FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
   }
   if (page == PAGE_SCOPE) {
     scope_cursor = constrain(scope_cursor + direction, 0, SCOPE_FIELDS - 1);
+    ScopeFollowCursor();
     return;
   }
   if (page == PAGE_CVMOD) {
@@ -1378,6 +1400,12 @@ FLASHMEM void XandNor::HandleButtonEvent(const UI::Event &event) {
   if (page == XandNorDefs::PAGE_SCOPE && !preset_mode &&
       event.control == OC::CONTROL_BUTTON_R && event.type == UI::EVENT_BUTTON_PRESS)
     scope_hold = !scope_hold;
+  // Scope: left encoder press zooms in, 8 -> 4 -> 2 -> 1 traces, then back to 8.
+  if (page == XandNorDefs::PAGE_SCOPE && !preset_mode &&
+      event.control == OC::CONTROL_BUTTON_L && event.type == UI::EVENT_BUTTON_PRESS) {
+    scope_zoom = (scope_zoom + 1) % 4;
+    ScopeFollowCursor();
+  }
 #ifdef ARDUINO_TEENSY41
   // Extra ORN8 buttons: X toggles Routing, Y toggles the preset overlay.
   // Z is left alone: the platform uses it as a modifier for its menus.

@@ -246,6 +246,9 @@ static constexpr uint8_t kDefaultTraces[kScopeTraces] = {1, 2, 3, 4, 9, 10, 11, 
 static constexpr uint16_t kScopeSpanMs[] = {0, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000};
 static constexpr int kScopeSpans = sizeof(kScopeSpanMs) / sizeof(kScopeSpanMs[0]);
 static constexpr uint16_t kScopeFreeSpanMs = 1000; // Auto with no tempo yet
+// Roll + Auto never spans less than this, or a fast clock scrolls faster than
+// the display can follow (2 s is about one column per display frame).
+static constexpr uint16_t kRollMinSpanMs = 2000;
 enum ScopeField { SCOPE_MODE, SCOPE_TRIG, SCOPE_SPAN, SCOPE_TRACE0, SCOPE_FIELDS = SCOPE_TRACE0 + kScopeTraces };
 
 // Up/Down are labelled A/B on the Teensy 4.1 (ORN8) panel.
@@ -565,7 +568,10 @@ private:
       if (!scope_roll && !trig && !free_run) return;
       // Ticks per column: the set span, or Auto = two trigger periods.
       uint32_t span = kScopeSpanMs[scope_span] * 16666u / 1000; // ms -> ticks
-      if (!span) span = (scope_period && !free_run) ? 2 * scope_period : kScopeFreeSpanMs * 16666u / 1000;
+      if (!span) {
+        span = (scope_period && !free_run) ? 2 * scope_period : kScopeFreeSpanMs * 16666u / 1000;
+        if (scope_roll) span = max(span, kRollMinSpanMs * 16666u / 1000);
+      }
       scope_col_ticks = max(span / kScopeCols, 1u);
       scope_col = 0;
       scope_tick = 0;

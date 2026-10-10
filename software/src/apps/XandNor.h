@@ -1043,20 +1043,27 @@ FLASHMEM void XandNor::DrawScope(bool interactive) const {
   for (int i = scope_win; i < scope_win + visible; ++i) {
     const int y = top + (i - scope_win) * h;
     const int sig = scope_traces[i];
-    if (!sig) gfxPrint(1, y, "--");
-    else if (sig <= kNumChannels) { gfxPrint(1, y, "C"); gfxPrint(sig); }
-    else { const char n[2] = { char('A' + sig - 1 - kNumChannels), '\0' }; gfxPrint(4, y, n); }
-    if (interactive && scope_cursor == SCOPE_TRACE0 + i) gfxInvert(0, y, 13, 7);
+    if (interactive) { // the screensaver drops the labels
+      if (!sig) gfxPrint(1, y, "--");
+      else if (sig <= kNumChannels) { gfxPrint(1, y, "C"); gfxPrint(sig); }
+      else { const char n[2] = { char('A' + sig - 1 - kNumChannels), '\0' }; gfxPrint(4, y, n); }
+      if (scope_cursor == SCOPE_TRACE0 + i) gfxInvert(0, y, 13, 7);
+    }
     if (!sig) continue;
 
     const int bit = sig - 1; // C1-C4 = bits 0-3, A-H = bits 4-11
     // Roll draws the ring oldest-first, so the newest column is on the right.
     // Sweep draws it in place, leaving a gap just ahead of the write point.
     const int first = scope_mode == SCOPE_ROLL ? scope_head : 0;
+    // The page draws the columns after the labels (x = 14-127); the
+    // screensaver spreads them over the full width instead.
+    const int x0 = interactive ? 14 : 0;
+    const int width = interactive ? kScopeCols : 128;
     bool prev = scope_disp[first] >> bit & 1;
-    for (int c = 0; c < kScopeCols; ++c) {
+    for (int px = 0; px < width; ++px) {
+      const int c = interactive ? px : px * kScopeCols / 128;
       const bool hi = scope_disp[(first + c) % kScopeCols] >> bit & 1;
-      const int x = 14 + c;
+      const int x = x0 + px;
       if (scope_mode == SCOPE_SWEEP &&
           (c - scope_head + kScopeCols) % kScopeCols < kSweepGap) {
         prev = hi; // no line across the gap

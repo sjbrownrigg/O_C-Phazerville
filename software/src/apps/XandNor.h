@@ -40,6 +40,7 @@ enum Page {
   PAGE_CHANNEL_D,
   PAGE_ROUTING,
   PAGE_CVMOD,
+  PAGE_SCOPE,
   PAGE_COUNT
 };
 
@@ -47,7 +48,7 @@ static constexpr int kNumChannels = 4;
 static constexpr int kNumOutputs = DAC_CHANNEL_COUNT;
 
 static const char * const kPageNames[PAGE_COUNT] = {
-  "Overview", "CH1", "CH2", "CH3", "CH4", "Routing", "CV Mod"
+  "Overview", "CH1", "CH2", "CH3", "CH4", "Routing", "CV Mod", "Scope"
 };
 
 // Output functions. OUT and NOT read one channel; the rest combine two.
@@ -234,6 +235,19 @@ static constexpr uint8_t kStorageVersion = 2;
 static constexpr size_t kStorageSize = 2 + (1 + kNumSlots) * sizeof(PackedPatch);
 static constexpr int kMessageFrames = 40; // "Saved"/"Loaded" banner, ~1 s
 
+// Scope: a logic-analyser view of the app's own signals. Each column holds
+// one bit per signal (CH1-CH4 in bits 0-3, outputs A-H in bits 4-11), OR-ed
+// over the column's time so short pulses still show at slow timebases.
+static constexpr int kScopeCols = 114;   // x = 14..127, after the labels
+static constexpr int kScopeTraces = 8;
+static constexpr int kScopeSignals = 1 + kNumChannels + 8; // off, CH1-4, A-H
+static constexpr uint8_t kDefaultTraces[kScopeTraces] = {1, 2, 3, 4, 9, 10, 11, 12}; // C1-C4, E-H
+// Timebase: 0 = Auto (two trigger periods per screen), else ms per screen.
+static constexpr uint16_t kScopeSpanMs[] = {0, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000};
+static constexpr int kScopeSpans = sizeof(kScopeSpanMs) / sizeof(kScopeSpanMs[0]);
+static constexpr uint16_t kScopeFreeSpanMs = 1000; // Auto with no tempo yet
+enum ScopeField { SCOPE_TRIG, SCOPE_SPAN, SCOPE_TRACE0, SCOPE_FIELDS = SCOPE_TRACE0 + kScopeTraces };
+
 // Up/Down are labelled A/B on the Teensy 4.1 (ORN8) panel.
 #ifdef ARDUINO_TEENSY41
 static const char * const kPresetHint = "A:Save  B:Load";
@@ -291,6 +305,7 @@ public:
       out_high[o] = v;
       GateOut(o, v);
     }
+    ScopeSample();
   }
 
   void View() const;
@@ -368,6 +383,19 @@ private:
   bool preset_mode = false;
   int slot_cursor = 0;
   mutable int message_frames = 0;
+
+  // Scope (not saved with patches)
+  DigitalInputMap scope_trig;     // sweep trigger; none = free-running
+  uint8_t scope_span = 0;         // index into kScopeSpanMs
+  uint8_t scope_traces[XandNorDefs::kScopeTraces];
+  int scope_cursor = 0;
+  bool scope_hold = false;
+  uint16_t scope_cap[XandNorDefs::kScopeCols];  // being captured (Controller)
+  uint16_t scope_disp[XandNorDefs::kScopeCols]; // last complete sweep (display)
+  int scope_col = -1;             // -1 = waiting for a trigger
+  uint32_t scope_col_ticks = 0, scope_tick = 0;
+  uint16_t scope_acc = 0;
+  uint32_t scope_last_trig = 0, scope_period = 0;
   const char *message = "";
 
   // Advances channel ch by one tick and returns its gate.
@@ -510,6 +538,45 @@ private:
     return UsToTicks(StepPosToUs(min(pos, int32_t(kNumLengths * 256))));
   }
 
+  // One tick of scope capture: OR this tick's states into the current column;
+  // start a sweep on the trigger (or at once when free-running).
+  void ScopeSample() {
+    using namespace XandNorDefs;
+    uint16_t mask = 0;
+    for (int ch = 0; ch < kNumChannels; ++ch) mask |= chan_high[ch] << ch;
+    for (int o = 0; o < kNumOutputs; ++o) mask |= out_high[o] << (4 + o);
+
+    const bool free_run = !(scope_trig.Pack() & 0xff);
+    const bool trig = scope_trig.Clock();
+    const uint32_t now = OC::CORE::ticks;
+    if (trig) {
+      const uint32_t p = now - scope_last_trig;
+      scope_period = (scope_last_trig && p <= kMaxPeriodTicks) ? p : 0;
+      scope_last_trig = now;
+    }
+
+    if (scope_col < 0) {
+      if (!trig && !free_run) return;
+      // Ticks per column for this sweep.
+      uint32_t span = kScopeSpanMs[scope_span] * 16666u / 1000; // ms -> ticks
+      if (!span) span = (scope_period && !free_run) ? 2 * scope_period : kScopeFreeSpanMs * 16666u / 1000;
+      scope_col_ticks = max(span / kScopeCols, 1u);
+      scope_col = 0;
+      scope_tick = 0;
+      scope_acc = 0;
+    }
+    scope_acc |= mask;
+    if (++scope_tick >= scope_col_ticks) {
+      scope_cap[scope_col++] = scope_acc;
+      scope_acc = 0;
+      scope_tick = 0;
+      if (scope_col >= kScopeCols) {
+        if (!scope_hold) memcpy(scope_disp, scope_cap, sizeof(scope_disp));
+        scope_col = -1;
+      }
+    }
+  }
+
   // The level of a channel's source, for level mode: the CV of an input or
   // output, or 5 V / 0 V for a trigger or MIDI source.
   int LevelIn(int ch) const {
@@ -548,6 +615,7 @@ private:
   void PackPatch(XandNorDefs::PackedPatch &p) const;
   void UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_global = false);
   void DrawMod() const;
+  void DrawScope() const;
   void DrawScrollBar(int scroll_pos, int rows) const;
   void SaveSlot(int slot);
   void LoadSlot(int slot);
@@ -613,6 +681,14 @@ FLASHMEM void XandNor::Start() {
   for (int o = 0; o < 8; ++o) live_fn[o] = routes[o].fn;
   preset_cv = CVInputMap();
   preset_trig = DigitalInputMap{};
+  scope_trig = DigitalInputMap{};
+  scope_trig.SetGateInput(0); // T1
+  scope_span = 0;
+  for (int i = 0; i < kScopeTraces; ++i) scope_traces[i] = kDefaultTraces[i];
+  scope_cursor = 0;
+  scope_hold = false;
+  scope_col = -1;
+  memset(scope_disp, 0, sizeof(scope_disp));
   pending_slot = -1;
 }
 
@@ -716,6 +792,10 @@ FLASHMEM void XandNor::View() const {
   using namespace XandNorDefs;
   if (preset_mode) {
     DrawPresets();
+    return;
+  }
+  if (page == PAGE_SCOPE) { // full screen: no header or page dots
+    DrawScope();
     return;
   }
   gfxHeader("(X)AND (N)OR");
@@ -908,6 +988,44 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
   DrawFieldCursor(f.x - 1, 13 + (f.row - scroll) * 9 + 8, f.w);
 }
 
+// Scope: a status line, then eight 7-pixel traces with labels. The selected
+// trace has a bar beside its label; the selected status field is underlined.
+FLASHMEM void XandNor::DrawScope() const {
+  using namespace XandNorDefs;
+  gfxPrint(1, 0, "T:");
+  gfxPrint(13, 0, scope_trig.InputName());
+  gfxPos(40, 0);
+  const uint16_t ms = kScopeSpanMs[scope_span];
+  if (!ms) gfxPrint("Auto");
+  else if (ms < 1000) { gfxPrint(ms); gfxPrint("ms"); }
+  else { gfxPrint(ms / 1000); gfxPrint("s"); }
+  if (scope_hold) gfxPrint(98, 0, "HOLD");
+
+  for (int i = 0; i < kScopeTraces; ++i) {
+    const int y = 8 + i * 7;
+    const int sig = scope_traces[i];
+    if (!sig) { gfxPrint(1, y, "--"); continue; }
+    if (sig <= kNumChannels) { gfxPrint(1, y, "C"); gfxPrint(sig); }
+    else { const char n[2] = { char('A' + sig - 1 - kNumChannels), '\0' }; gfxPrint(4, y, n); }
+    const int bit = sig - 1; // C1-C4 = bits 0-3, A-H = bits 4-11
+    bool prev = scope_disp[0] >> bit & 1;
+    for (int c = 0; c < kScopeCols; ++c) {
+      const bool hi = scope_disp[c] >> bit & 1;
+      const int x = 14 + c;
+      gfxPixel(x, hi ? y + 1 : y + 5);
+      if (hi != prev) gfxLine(x, y + 1, x, y + 5);
+      prev = hi;
+    }
+  }
+
+  if (scope_cursor == SCOPE_TRIG) DrawFieldCursor(12, 7, 19);
+  else if (scope_cursor == SCOPE_SPAN) DrawFieldCursor(39, 7, 31);
+  else {
+    const int y = 8 + (scope_cursor - SCOPE_TRACE0) * 7;
+    gfxLine(12, y, 12, y + 6);
+  }
+}
+
 // Scroll bar: a dotted track with a solid thumb.
 FLASHMEM void XandNor::DrawScrollBar(int scroll_pos, int rows) const {
   using namespace XandNorDefs;
@@ -1064,6 +1182,10 @@ FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
     if (c >= 0 && c <= last) route_cursor = c;
     return;
   }
+  if (page == PAGE_SCOPE) {
+    scope_cursor = constrain(scope_cursor + direction, 0, SCOPE_FIELDS - 1);
+    return;
+  }
   if (page == PAGE_CVMOD) {
     mod_cursor = constrain(mod_cursor + direction, 0, MOD_COUNT - 1);
     const int row = ModFieldPos(mod_cursor).row;
@@ -1084,6 +1206,18 @@ FLASHMEM static void AdjustDepth(CVInputMap &m, int direction) {
 
 FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
   using namespace XandNorDefs;
+  if (page == PAGE_SCOPE && !preset_mode) {
+    if (scope_cursor == SCOPE_TRIG) {
+      scope_trig.ChangeSource(direction);
+      scope_period = 0;
+    } else if (scope_cursor == SCOPE_SPAN) {
+      scope_span = constrain(scope_span + direction, 0, kScopeSpans - 1);
+    } else {
+      uint8_t &t = scope_traces[scope_cursor - SCOPE_TRACE0];
+      t = constrain(t + direction, 0, kScopeSignals - 1);
+    }
+    return;
+  }
   if (page == PAGE_CVMOD && !preset_mode) {
     if (mod_cursor < MOD_PRESET_CV) {
       CVInputMap &m = fn_cv[mod_cursor / 2];
@@ -1228,7 +1362,8 @@ FLASHMEM void XandNor::Loop() {
 
 FLASHMEM void XandNor::DrawMenu() const { BaseView(); }
 
-FLASHMEM void XandNor::DrawScreensaver() const { BaseScreensaver(); }
+// The scope keeps sampling on every page, so it doubles as the screensaver.
+FLASHMEM void XandNor::DrawScreensaver() const { DrawScope(); }
 
 void XandNor::DrawDebugInfo() const {}
 
@@ -1239,6 +1374,10 @@ FLASHMEM void XandNor::HandleButtonEvent(const UI::Event &event) {
   }
   if (event.control == OC::CONTROL_BUTTON_DOWN && event.type == UI::EVENT_BUTTON_PRESS)
     OnDownButtonPress();
+  // Scope: right encoder press freezes or resumes the display.
+  if (page == XandNorDefs::PAGE_SCOPE && !preset_mode &&
+      event.control == OC::CONTROL_BUTTON_R && event.type == UI::EVENT_BUTTON_PRESS)
+    scope_hold = !scope_hold;
 #ifdef ARDUINO_TEENSY41
   // Extra ORN8 buttons: X toggles Routing, Y toggles the preset overlay.
   // Z is left alone: the platform uses it as a modifier for its menus.

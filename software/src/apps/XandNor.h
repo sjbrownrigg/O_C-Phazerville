@@ -249,11 +249,11 @@ static constexpr uint16_t kScopeFreeSpanMs = 1000; // Auto with no tempo yet
 // Roll + Auto: a fixed span, so the scroll speed never depends on the clock
 // (2 s is about one column per display frame).
 static constexpr uint16_t kRollAutoSpanMs = 2000;
-// Roll scrolls the picture; Sweep redraws it in place behind a moving gap;
+// Roll scrolls the picture; Sweep redraws it in place as new columns arrive;
 // Trig captures one sweep per trigger. Roll and Sweep capture continuously.
 enum ScopeMode : uint8_t { SCOPE_ROLL, SCOPE_SWEEP, SCOPE_TRIGGERED, SCOPE_MODES };
 static const char * const kScopeModeNames[SCOPE_MODES] = {"Roll", "Sweep", "Trig"};
-static constexpr int kSweepGap = 4; // blank columns ahead of the write point
+static constexpr int kSweepGap = 0; // blank columns ahead of the write point (0 = none)
 enum ScopeField { SCOPE_MODE, SCOPE_TRIG, SCOPE_SPAN, SCOPE_TRACE0, SCOPE_FIELDS = SCOPE_TRACE0 + kScopeTraces };
 
 // Up/Down are labelled A/B on the Teensy 4.1 (ORN8) panel.

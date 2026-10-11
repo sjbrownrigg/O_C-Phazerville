@@ -251,7 +251,7 @@ struct BankHeader {
   uint8_t pad[2];
 };
 static constexpr uint8_t kBankVersion = 1;
-static constexpr int kMessageFrames = 40; // "Saved"/"Loaded" banner, ~1 s
+static constexpr uint32_t kMessageMs = 2500; // how long "Saved" etc. stay up
 
 // Scope: a logic-analyser view of the app's own signals. Each column holds
 // one bit per signal (CH1-CH4 in bits 0-3, outputs A-H in bits 4-11), OR-ed
@@ -410,7 +410,7 @@ private:
   int active_slot = -1;    // last slot saved or loaded; -1 = none
   bool preset_mode = false;
   int slot_cursor = 0;
-  mutable int message_frames = 0;
+  uint32_t message_until = 0; // millis() when the overlay message clears
 
   // Scope (not saved with patches)
   DigitalInputMap scope_trig;     // sweep trigger; none = free-running
@@ -831,7 +831,7 @@ FLASHMEM void XandNor::SaveSlot(int slot) {
   slot_used |= 1 << slot;
   active_slot = slot;
   WriteBank(); // sets the message: where it saved, or that it failed
-  message_frames = XandNorDefs::kMessageFrames;
+  message_until = millis() + XandNorDefs::kMessageMs;
 }
 
 // An empty slot loads the default patch.
@@ -840,7 +840,7 @@ FLASHMEM void XandNor::LoadSlot(int slot) {
   else LoadDefaults();
   active_slot = slot;
   message = (slot_used & (1 << slot)) ? "Loaded" : "Defaults";
-  message_frames = XandNorDefs::kMessageFrames;
+  message_until = millis() + XandNorDefs::kMessageMs;
 }
 
 // -- Banks -------------------------------------------------------------------
@@ -938,7 +938,7 @@ FLASHMEM void XandNor::SelectBank(int b) {
     strcpy(text + 1, " saved");
     message = text;
   }
-  message_frames = XandNorDefs::kMessageFrames;
+  message_until = millis() + XandNorDefs::kMessageMs;
 }
 
 // -- UI ----------------------------------------------------------------------
@@ -1311,8 +1311,7 @@ FLASHMEM void XandNor::DrawPresets() const {
     if (slot_used & (1 << i)) gfxRect(x + 16, y + 5, 3, 3);
     if (i == slot_cursor) gfxInvert(x, y, 26, 14);
   }
-  if (message_frames > 0) {
-    --message_frames;
+  if (int32_t(message_until - millis()) > 0) {
     gfxPrint(64 - 3 * (int)strlen(message), 52, message);
   } else {
     gfxPrint(1, 52, kPresetHint);
@@ -1338,7 +1337,7 @@ FLASHMEM void XandNor::OnUpButtonLongPress() {
   preset_mode = !preset_mode;
   if (preset_mode) {
     slot_cursor = active_slot >= 0 ? active_slot : 0;
-    message_frames = 0;
+    message_until = 0;
   }
 }
 

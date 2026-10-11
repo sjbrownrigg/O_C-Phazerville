@@ -958,8 +958,7 @@ FLASHMEM void XandNor::SaveSlot(int slot) {
   PackPatch(slots[slot]);
   slot_used |= 1 << slot;
   active_slot = slot;
-  WriteBank(); // sets the message: where it saved, or that it failed
-  message_badge = nullptr;
+  WriteBank(); // sets the message and its [SD]/[Int] badge
   message_until = millis() + XandNorDefs::kMessageMs;
 }
 
@@ -1016,11 +1015,17 @@ FLASHMEM bool XandNor::WriteBank() {
     char name[13];
     BankFileName(name, bank);
     PhzConfig::myfs.remove(name);
-    message = "Saved (SD)";
+    message = "Saved";
+    message_badge = "[SD]";
     return true;
   }
-  if (WriteBankTo(PhzConfig::myfs)) { message = "Saved (Int)"; return true; }
+  if (WriteBankTo(PhzConfig::myfs)) {
+    message = "Saved";
+    message_badge = "[Int]";
+    return true;
+  }
   message = "Save failed";
+  message_badge = nullptr;
   return false;
 }
 
@@ -1407,6 +1412,9 @@ FLASHMEM void XandNor::DrawScrollBar(int scroll_pos, int rows) const {
 static constexpr int OutputFields(uint8_t fn) {
   return fn == XandNorDefs::FN_ENV ? 3 : (fn == XandNorDefs::FN_CNT || fn == XandNorDefs::FN_BIN) ? 1 : 0;
 }
+// Cursor stops per row: rows with no settings still get one (on the "-"), so
+// the cursor can reach, and scroll to, every output.
+static constexpr int OutputStops(uint8_t fn) { return OutputFields(fn) ? OutputFields(fn) : 1; }
 static constexpr XandNorDefs::FieldPos OutputFieldPos(uint8_t fn, int f) {
   return fn == XandNorDefs::FN_ENV
     ? (f == 0 ? XandNorDefs::FieldPos{0, 36, 18} : f == 1 ? XandNorDefs::FieldPos{0, 58, 30}
@@ -1437,9 +1445,14 @@ FLASHMEM void XandNor::DrawOutputs() const {
   DrawScrollBar(out_scroll, kNumOutputs);
   const int o = out_cursor / 3, f = out_cursor % 3;
   const uint8_t fn = routes[o].fn;
-  if (f < OutputFields(fn) && o >= out_scroll && o < out_scroll + kVisibleRows) {
-    const FieldPos fp = OutputFieldPos(fn, f);
-    DrawFieldCursor(fp.x - 1, 13 + (o - out_scroll) * 9 + 8, fp.w);
+  if (o >= out_scroll && o < out_scroll + kVisibleRows) {
+    const int y = 13 + (o - out_scroll) * 9 + 8;
+    if (f < OutputFields(fn)) {
+      const FieldPos fp = OutputFieldPos(fn, f);
+      DrawFieldCursor(fp.x - 1, y, fp.w);
+    } else {
+      DrawFieldCursor(39, y, 7); // the "-" of a row with no settings
+    }
   }
 }
 
@@ -1537,7 +1550,8 @@ FLASHMEM void XandNor::DrawPresets() const {
     }
   } else {
     gfxPrint(1, 52, kPresetHint);
-    gfxPrint(110, 52, SDcard_Ready ? "SD" : "Int"); // where banks are saved
+    const char *where = SDcard_Ready ? "[SD]" : "[Int]"; // where banks are saved
+    gfxPrint(127 - 6 * (int)strlen(where), 52, where);
   }
 }
 
@@ -1609,7 +1623,7 @@ FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
     int c = out_cursor;
     do {
       c += (direction > 0) ? 1 : -1;
-    } while (c >= 0 && c < kNumOutputs * 3 && c % 3 >= OutputFields(routes[c / 3].fn));
+    } while (c >= 0 && c < kNumOutputs * 3 && c % 3 >= OutputStops(routes[c / 3].fn));
     if (c >= 0 && c < kNumOutputs * 3) out_cursor = c;
     const int row = out_cursor / 3;
     if (row < out_scroll) out_scroll = row;

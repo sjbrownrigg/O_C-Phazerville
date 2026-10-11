@@ -225,14 +225,32 @@ struct PackedPatch {
   uint16_t preset_cv;  // CV picks the preset slot to load (global, see below)
   uint8_t preset_trig; // DigitalInputMap source byte: the trigger that loads it
   uint8_t reserved;
+  // Storage v3: room for M7/M8 settings. Zero means "not set" throughout.
+  uint8_t ext[128];
 };
-static_assert(sizeof(PackedPatch) == 128, "PackedPatch layout changed");
+static_assert(sizeof(PackedPatch) == 256, "PackedPatch layout changed");
+static constexpr size_t kPatchV2Size = 128; // the patch before ext existed
 
 static constexpr int kNumSlots = 8;
-// Bump when PackedPatch changes; stored data with another version is ignored.
-static constexpr uint8_t kStorageVersion = 2;
-// version + slot-used mask + working patch + slots
-static constexpr size_t kStorageSize = 2 + (1 + kNumSlots) * sizeof(PackedPatch);
+// v3: version, current bank, working patch; the slots live in bank files.
+// v2 (read once, to migrate): version, slot-used mask, working patch and
+// eight slots, all 128-byte patches.
+static constexpr uint8_t kStorageVersion = 3;
+static constexpr uint8_t kStorageVersionV2 = 2;
+// Fixed at the v2 size: the platform discards saved data whose size changes,
+// so keeping it lets v2 data reach RestoreAppData() and migrate.
+static constexpr size_t kStorageSize = 2 + 9 * kPatchV2Size;
+static_assert(2 + sizeof(PackedPatch) <= kStorageSize, "v3 data must fit the fixed size");
+
+// Preset banks: 8 slots per file on the SD card, else internal flash.
+static constexpr int kNumBanks = 100;
+struct BankHeader {
+  char magic[4];     // "XNBK"
+  uint8_t version;   // kBankVersion
+  uint8_t slot_used; // bit per slot
+  uint8_t pad[2];
+};
+static constexpr uint8_t kBankVersion = 1;
 static constexpr int kMessageFrames = 40; // "Saved"/"Loaded" banner, ~1 s
 
 // Scope: a logic-analyser view of the app's own signals. Each column holds
@@ -387,6 +405,8 @@ private:
   // Presets
   XandNorDefs::PackedPatch slots[XandNorDefs::kNumSlots];
   uint8_t slot_used = 0;   // bit per slot
+  uint8_t bank = 0;        // current bank; slots[] holds its contents
+  bool bank_dirty = false; // slots need writing to the bank file (Loop)
   int active_slot = -1;    // last slot saved or loaded; -1 = none
   bool preset_mode = false;
   int slot_cursor = 0;
@@ -645,6 +665,9 @@ private:
   void DrawScrollBar(int scroll_pos, int rows) const;
   void SaveSlot(int slot);
   void LoadSlot(int slot);
+  bool WriteBank();
+  void ReadBank(int b);
+  void SelectBank(int b);
 };
 
 // -- Setup -------------------------------------------------------------------
@@ -696,7 +719,9 @@ FLASHMEM void XandNor::Start() {
     chan_high[ch] = false;
   }
   for (int o = 0; o < kNumOutputs; ++o) out_high[o] = false;
-  slot_used = 0;
+  bank = 0;
+  bank_dirty = false;
+  ReadBank(0); // RestoreAppData() switches to the saved bank
   active_slot = -1;
   page = PAGE_OVERVIEW;
   cursor = 0;
@@ -803,7 +828,7 @@ FLASHMEM void XandNor::SaveSlot(int slot) {
   PackPatch(slots[slot]);
   slot_used |= 1 << slot;
   active_slot = slot;
-  message = "Saved";
+  message = WriteBank() ? "Saved" : "Not saved: no storage";
   message_frames = XandNorDefs::kMessageFrames;
 }
 
@@ -814,6 +839,61 @@ FLASHMEM void XandNor::LoadSlot(int slot) {
   active_slot = slot;
   message = (slot_used & (1 << slot)) ? "Loaded" : "Defaults";
   message_frames = XandNorDefs::kMessageFrames;
+}
+
+// -- Banks -------------------------------------------------------------------
+// Banks are files of eight slots, on the SD card when one is ready, else the
+// platform's internal LittleFS. Saving a slot rewrites its bank's file.
+
+FLASHMEM static FS &BankFS() {
+  if (SDcard_Ready) return SD;
+  return PhzConfig::myfs;
+}
+
+FLASHMEM static void BankFileName(char *name, int b) {
+  strcpy(name, "XNBANK00.DAT");
+  name[6] = '0' + b / 10;
+  name[7] = '0' + b % 10;
+}
+
+FLASHMEM bool XandNor::WriteBank() {
+  using namespace XandNorDefs;
+  char name[13];
+  BankFileName(name, bank);
+  FS &fs = BankFS();
+  fs.remove(name);
+  File f = fs.open(name, FILE_WRITE);
+  if (!f) return false;
+  const BankHeader h = {{'X', 'N', 'B', 'K'}, kBankVersion, slot_used, {0, 0}};
+  bool ok = f.write(&h, sizeof(h)) == sizeof(h);
+  ok = ok && f.write(slots, sizeof(slots)) == sizeof(slots);
+  f.close();
+  return ok;
+}
+
+// Loads bank b into the slots; a missing or unreadable file is an empty bank.
+FLASHMEM void XandNor::ReadBank(int b) {
+  using namespace XandNorDefs;
+  memset(slots, 0, sizeof(slots));
+  slot_used = 0;
+  char name[13];
+  BankFileName(name, b);
+  File f = BankFS().open(name, FILE_READ);
+  if (!f) return;
+  BankHeader h;
+  if (f.read(&h, sizeof(h)) == sizeof(h) && !memcmp(h.magic, "XNBK", 4) &&
+      h.version == kBankVersion && f.read(slots, sizeof(slots)) == sizeof(slots)) {
+    slot_used = h.slot_used;
+  } else {
+    memset(slots, 0, sizeof(slots));
+  }
+  f.close();
+}
+
+FLASHMEM void XandNor::SelectBank(int b) {
+  bank = b;
+  ReadBank(b);
+  active_slot = -1;
 }
 
 // -- UI ----------------------------------------------------------------------
@@ -1174,7 +1254,9 @@ FLASHMEM void XandNor::DrawRouting() const {
 FLASHMEM void XandNor::DrawPresets() const {
   using namespace XandNorDefs;
   gfxHeader("(X)AND(N)OR");
-  gfxPrint(128 - 6 * 7 - 1, 1, "Presets");
+  gfxPrint(128 - 6 * 7 - 1, 1, "Bank ");
+  if (bank < 10) gfxPrint("0");
+  gfxPrint(bank);
   for (int i = 0; i < kNumSlots; ++i) {
     const int x = 4 + (i % 4) * 31;
     const int y = 15 + (i / 4) * 17;
@@ -1189,6 +1271,7 @@ FLASHMEM void XandNor::DrawPresets() const {
     gfxPrint(64 - 3 * (int)strlen(message), 52, message);
   } else {
     gfxPrint(1, 52, kPresetHint);
+    gfxPrint(110, 52, SDcard_Ready ? "SD" : "Int"); // where banks are saved
   }
 }
 
@@ -1233,8 +1316,9 @@ FLASHMEM void XandNor::OnDownButtonPress() {
 
 FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
   using namespace XandNorDefs;
-  if (preset_mode) {
-    slot_cursor = constrain(slot_cursor + direction, 0, kNumSlots - 1);
+  if (preset_mode) { // left encoder: bank (loads it at once)
+    const int b = constrain(bank + direction, 0, kNumBanks - 1);
+    if (b != bank) SelectBank(b);
     return;
   }
   if (page == PAGE_ROUTING) {
@@ -1392,24 +1476,41 @@ FLASHMEM size_t XandNor::SaveAppData(util::StreamBufferWriter &stream_buffer) co
   PackedPatch working;
   PackPatch(working);
   stream_buffer.Write(kStorageVersion);
-  stream_buffer.Write(slot_used);
+  stream_buffer.Write(bank);
   stream_buffer.Write(working);
-  for (int i = 0; i < kNumSlots; ++i) stream_buffer.Write(slots[i]);
   return stream_buffer.written();
 }
 
 FLASHMEM size_t XandNor::RestoreAppData(util::StreamBufferReader &stream_buffer) {
   using namespace XandNorDefs;
-  if (stream_buffer.Read<uint8_t>() != kStorageVersion) return stream_buffer.read();
-  const uint8_t used = stream_buffer.Read<uint8_t>();
-  PackedPatch working, stored[kNumSlots];
-  stream_buffer.Read(working);
-  for (int i = 0; i < kNumSlots; ++i) stream_buffer.Read(stored[i]);
-  if (stream_buffer.underflow()) return stream_buffer.read();
+  const uint8_t version = stream_buffer.Read<uint8_t>();
 
-  slot_used = used;
-  for (int i = 0; i < kNumSlots; ++i) slots[i] = stored[i];
-  UnpackPatch(working, true);
+  if (version == kStorageVersion) {
+    const uint8_t b = stream_buffer.Read<uint8_t>();
+    PackedPatch working;
+    stream_buffer.Read(working);
+    if (stream_buffer.underflow()) return stream_buffer.read();
+    SelectBank(constrain(b, 0, kNumBanks - 1));
+    UnpackPatch(working, true);
+    return stream_buffer.read();
+  }
+
+  if (version == kStorageVersionV2) {
+    // Migrate: the v2 slots become bank 00, written out by Loop().
+    const uint8_t used = stream_buffer.Read<uint8_t>();
+    uint8_t raw[1 + kNumSlots][kPatchV2Size];
+    for (auto &r : raw) stream_buffer.Read(r);
+    if (stream_buffer.underflow()) return stream_buffer.read();
+    PackedPatch working;
+    memset(&working, 0, sizeof(working));
+    memcpy(&working, raw[0], kPatchV2Size);
+    memset(slots, 0, sizeof(slots));
+    for (int i = 0; i < kNumSlots; ++i) memcpy(&slots[i], raw[1 + i], kPatchV2Size);
+    bank = 0;
+    slot_used = used;
+    bank_dirty = true;
+    UnpackPatch(working, true);
+  }
   return stream_buffer.read();
 }
 
@@ -1419,6 +1520,10 @@ FLASHMEM void XandNor::HandleAppEvent(OC::AppEvent event) {
 
 // Applies a preset load requested by the preset trigger, outside the interrupt.
 FLASHMEM void XandNor::Loop() {
+  if (bank_dirty) { // migrated v2 slots: write them out as bank 00
+    bank_dirty = false;
+    WriteBank();
+  }
   int slot = pending_slot;
   if (slot == -1) return;
   pending_slot = -1;

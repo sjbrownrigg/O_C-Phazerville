@@ -30,6 +30,13 @@
 
 #pragma once
 
+// Audio applets (M8): the platform's audio engine, `audio_app`, exists only on
+// Teensy 4.1 builds with Hemisphere; Quadrants hosts it too, and both apps
+// share the same audio setup.
+#if defined(ARDUINO_TEENSY41) && !defined(NO_HEMISPHERE)
+#define XANDNOR_AUDIO 1
+#endif
+
 namespace XandNorDefs {
 
 enum Page {
@@ -41,6 +48,7 @@ enum Page {
   PAGE_ROUTING,
   PAGE_OUTPUTS,
   PAGE_CVMOD,
+  PAGE_AUDIO,
   PAGE_SCOPE,
   PAGE_COUNT
 };
@@ -49,7 +57,7 @@ static constexpr int kNumChannels = 4;
 static constexpr int kNumOutputs = DAC_CHANNEL_COUNT;
 
 static const char * const kPageNames[PAGE_COUNT] = {
-  "Overview", "CH1", "CH2", "CH3", "CH4", "Routing", "Outputs", "CV Mod", "Scope"
+  "Overview", "CH1", "CH2", "CH3", "CH4", "Routing", "Outputs", "CV Mod", "Audio", "Scope"
 };
 
 // Output functions. OUT and NOT read one channel; the rest combine two.
@@ -389,6 +397,9 @@ public:
       GateOut(o, v);
     }
     ScopeSample();
+#ifdef XANDNOR_AUDIO
+    audio_app.Controller(); // audio applets follow CV and triggers here too
+#endif
   }
 
   void View() const;
@@ -1128,6 +1139,12 @@ FLASHMEM void XandNor::View() const {
     DrawPresets();
     return;
   }
+#ifdef XANDNOR_AUDIO
+  if (page == PAGE_AUDIO) { // the audio engine draws its own full screen
+    audio_app.View();
+    return;
+  }
+#endif
   if (page == PAGE_SCOPE) { // full screen: no header or page dots
     DrawScope();
     return;
@@ -1827,6 +1844,9 @@ FLASHMEM void XandNor::HandleAppEvent(OC::AppEvent event) {
 
 // Applies a preset load requested by the preset trigger, outside the interrupt.
 FLASHMEM void XandNor::Loop() {
+#ifdef XANDNOR_AUDIO
+  audio_app.mainloop();
+#endif
   if (tidy_pending) { // once per boot, before any bank writes
     tidy_pending = false;
     TidyInternalBanks();
@@ -1854,6 +1874,19 @@ FLASHMEM void XandNor::DrawScreensaver() const { DrawScope(false); }
 void XandNor::DrawDebugInfo() const {}
 
 FLASHMEM void XandNor::HandleButtonEvent(const UI::Event &event) {
+#ifdef XANDNOR_AUDIO
+  // Audio page: every button goes to the audio engine, as in Quadrants. A or B
+  // pressed at its top level hands back: A to the previous page, B to the next.
+  if (page == XandNorDefs::PAGE_AUDIO && !preset_mode) {
+    if (event.control == OC::CONTROL_BUTTON_L || event.control == OC::CONTROL_BUTTON_R) {
+      audio_app.HandleEncoderButtonEvent(event);
+    } else if (audio_app.HandleButtonEvent(event)) {
+      if (event.control == OC::CONTROL_BUTTON_A) OnUpButtonPress();
+      if (event.control == OC::CONTROL_BUTTON_B) OnDownButtonPress();
+    }
+    return;
+  }
+#endif
   if (event.control == OC::CONTROL_BUTTON_UP) {
     if (event.type == UI::EVENT_BUTTON_LONG_PRESS) OnUpButtonLongPress();
     if (event.type == UI::EVENT_BUTTON_PRESS) OnUpButtonPress();
@@ -1885,6 +1918,12 @@ FLASHMEM void XandNor::HandleButtonEvent(const UI::Event &event) {
 }
 
 FLASHMEM void XandNor::HandleEncoderEvent(const UI::Event &event) {
+#ifdef XANDNOR_AUDIO
+  if (page == XandNorDefs::PAGE_AUDIO && !preset_mode) {
+    audio_app.HandleEncoderEvent(event);
+    return;
+  }
+#endif
   if (event.control == OC::CONTROL_ENCODER_L) OnLeftEncoderMove(event.value);
   if (event.control == OC::CONTROL_ENCODER_R) OnRightEncoderMove(event.value);
 }

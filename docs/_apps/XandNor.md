@@ -20,6 +20,7 @@ Press **A** / **B** to move between pages; the left encoder moves the cursor, th
 | **Routing** | Each output's function and the channel(s) it reads |
 | **Outputs** | Settings for the functions that need them: step size for CNT / BIN, mode and times for ENV |
 | **CV Mod** | Function-by-CV per output, and preset selection by CV with a load trigger |
+| **Audio** | The ORN8's audio applets, as in Quadrants; while on this page all buttons and encoders control audio, and A or B at its top level moves to the previous or next page. The audio setup is shared with Quadrants |
 | **Scope** | Eight on/off traces of channels and outputs, in Roll, Sweep or Trig mode; also the screensaver |
 
 Long-press **A** (or press **Y**) for the preset overlay: 100 banks of 8 slots, saved to the SD card or internal flash. Press **X** to jump to the Routing page and back.

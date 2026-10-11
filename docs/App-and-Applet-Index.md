@@ -21,6 +21,7 @@ Not everything can fit at once on Teensy 3.2 hardware, but you can use the [defa
  * [Dialectic Ping Pong](Dialectic-Ping-Pong)
  * [Enigma](Enigma) – Sequencer of shift registers (Turing Machines)
  * [EuclidKit](EuclidKit) - 4-track drum sequencer with Euclidean + Grids engines
+ * [(X)AND(N)OR](XandNor) - 4 gate channels routed through logic, CV and envelope functions to 8 outputs (ORN8 only)
  * [Harrington 1200](Harrington-1200) - Neo-Riemannian transformations for triad chord progressions
  * Hemisphere - 2 [Applets](#cv-applets) at a time
  * [Low-rents](Low-rents) - Lorenz attractor
@@ -174,7 +175,7 @@ _(note: T41 Audio Applets are not included here)_
 | **Analog Logic**            | [Calculate](Calculate)                                                                                                                                                         |                                                                                          |
 | **Clock Modulator**          | [ClockDivider](ClockDivider), [ClockSkip](Clock-Skipper), [DivSeq](DivSeq), [Metronome](Metronome), [PolyDiv](PolyDiv), [ProbDiv](ProbDiv), [ResetClk](Reset-Clock), [Shuffle](Shuffle)                                         |                                                                                          |
 | **CV Recorder**              | [ASR](ASR), [CVRec](CV-Recorder)                                                                                                                                                 |                                                                                          |
-| **Digital Logic**            | [Binary Counter](Binary-Counter), [Compare](Compare), [Cumulus](Cumulus), [Logic](Logic), [Schmitt](Schmitt-Trigger), [TL Neuron](Threshold-Logic-Neuron), [Trending](Trending)                                                         | [Neural Net](Neural-Net)                                                                             |
+| **Digital Logic**            | [Binary Counter](Binary-Counter), [Compare](Compare), [Cumulus](Cumulus), [Logic](Logic), [Schmitt](Schmitt-Trigger), [TL Neuron](Threshold-Logic-Neuron), [Trending](Trending)                                                         | [Neural Net](Neural-Net), [(X)AND(N)OR](XandNor)                                                    |
 | **Delay**                    | [Dr. LoFi](Dr.-LoFi), [GateDelay](Gate-Delay)  |   |
 | **Drums / Synth Voice**      | [BitBeat](BitBeat), [BootsNCat](BootsNCat), [BugCrack](BugCrack), [WTVCO](WTVCO)     | [Viznutcracker, sweet!](Viznutcracker-sweet)     |
 | **Effect**                   | [Dr. LoFi](Dr.-LoFi)    |                      |

@@ -408,10 +408,12 @@ private:
   uint8_t bank = 0;        // current bank; slots[] holds its contents
   bool bank_dirty = false; // slots need writing to the bank file (Loop)
   bool tidy_pending = true; // move internal-flash banks to the SD card (Loop)
+  const char *bank_from = nullptr; // where the current bank loaded from
   int active_slot = -1;    // last slot saved or loaded; -1 = none
   bool preset_mode = false;
   int slot_cursor = 0;
   uint32_t message_until = 0; // millis() when the overlay message clears
+  const char *message_badge = nullptr; // "[SD]"/"[Int]" after a bank message
 
   // Scope (not saved with patches)
   DigitalInputMap scope_trig;     // sweep trigger; none = free-running
@@ -833,6 +835,7 @@ FLASHMEM void XandNor::SaveSlot(int slot) {
   slot_used |= 1 << slot;
   active_slot = slot;
   WriteBank(); // sets the message: where it saved, or that it failed
+  message_badge = nullptr;
   message_until = millis() + XandNorDefs::kMessageMs;
 }
 
@@ -842,6 +845,7 @@ FLASHMEM void XandNor::LoadSlot(int slot) {
   else LoadDefaults();
   active_slot = slot;
   message = (slot_used & (1 << slot)) ? "Loaded" : "Defaults";
+  message_badge = nullptr;
   message_until = millis() + XandNorDefs::kMessageMs;
 }
 
@@ -954,9 +958,11 @@ FLASHMEM int XandNor::ReadBank(int b) {
   memset(slots, 0, sizeof(slots));
   slot_used = 0;
   int r = SDcard_Ready ? ReadBankFrom(SD, b) : 0;
+  bank_from = (r == 1) ? "[SD]" : nullptr;
   if (r != 1) {
     const int r2 = ReadBankFrom(PhzConfig::myfs, b);
     if (r2 != 0) r = r2;
+    if (r2 == 1) bank_from = "[Int]";
   }
   if (r != 1) { // nothing usable: leave the bank empty
     memset(slots, 0, sizeof(slots));
@@ -982,6 +988,7 @@ FLASHMEM void XandNor::SelectBank(int b) {
     strcpy(text + 1, " saved");
     message = text;
   }
+  message_badge = slot_used ? bank_from : nullptr;
   message_until = millis() + XandNorDefs::kMessageMs;
 }
 
@@ -1356,7 +1363,12 @@ FLASHMEM void XandNor::DrawPresets() const {
     if (i == slot_cursor) gfxInvert(x, y, 26, 14);
   }
   if (int32_t(message_until - millis()) > 0) {
-    gfxPrint(64 - 3 * (int)strlen(message), 52, message);
+    if (message_badge) { // "3 saved" left, "[SD]" right
+      gfxPrint(1, 52, message);
+      gfxPrint(127 - 6 * (int)strlen(message_badge), 52, message_badge);
+    } else {
+      gfxPrint(64 - 3 * (int)strlen(message), 52, message);
+    }
   } else {
     gfxPrint(1, 52, kPresetHint);
     gfxPrint(110, 52, SDcard_Ready ? "SD" : "Int"); // where banks are saved

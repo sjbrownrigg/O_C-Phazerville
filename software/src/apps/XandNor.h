@@ -372,9 +372,8 @@ public:
       bool v;
       switch (fn) {
         case FN_TOGL: if (rise_a) toggled[o] = !toggled[o]; v = toggled[o]; break;
-        case FN_LTCH: // set by a, reset by b; reset wins a tie
-          if (rise_a) toggled[o] = true;
-          if (rise_b) toggled[o] = false;
+        case FN_LTCH: // set by a, reset by b; simultaneous edges are ignored
+          if (rise_a != rise_b) toggled[o] = rise_a;
           v = toggled[o];
           break;
         case FN_NOT:  v = !a; break;

@@ -407,6 +407,7 @@ private:
   uint8_t slot_used = 0;   // bit per slot
   uint8_t bank = 0;        // current bank; slots[] holds its contents
   bool bank_dirty = false; // slots need writing to the bank file (Loop)
+  bool tidy_pending = true; // move internal-flash banks to the SD card (Loop)
   int active_slot = -1;    // last slot saved or loaded; -1 = none
   bool preset_mode = false;
   int slot_cursor = 0;
@@ -669,6 +670,7 @@ private:
   bool WriteBankTo(FS &fs);
   int ReadBank(int b);
   int ReadBankFrom(FS &fs, int b);
+  void TidyInternalBanks();
   void SelectBank(int b);
 };
 
@@ -881,10 +883,52 @@ FLASHMEM bool XandNor::WriteBankTo(FS &fs) {
 
 // SD card first; if that fails (or there's no card), the internal flash.
 FLASHMEM bool XandNor::WriteBank() {
-  if (SDcard_Ready && WriteBankTo(SD)) { message = "Saved (SD)"; return true; }
+  if (SDcard_Ready && WriteBankTo(SD)) {
+    // The SD copy now wins on load, so any internal copy is stale.
+    char name[13];
+    BankFileName(name, bank);
+    PhzConfig::myfs.remove(name);
+    message = "Saved (SD)";
+    return true;
+  }
   if (WriteBankTo(PhzConfig::myfs)) { message = "Saved (Int)"; return true; }
   message = "Save failed";
   return false;
+}
+
+// With an SD card present, moves bank files out of the internal flash: copies
+// any the card lacks (verifying the copy) and deletes the internal file. If the
+// card already has the bank, the internal copy is stale and just goes. A copy
+// that fails verification leaves the internal file in place.
+FLASHMEM void XandNor::TidyInternalBanks() {
+  using namespace XandNorDefs;
+  if (!SDcard_Ready) return;
+  uint8_t buf[sizeof(BankHeader) + sizeof(slots)];
+  uint8_t check[sizeof(buf)];
+  char name[13];
+  for (int b = 0; b < kNumBanks; ++b) {
+    BankFileName(name, b);
+    if (!PhzConfig::myfs.exists(name)) continue;
+    if (!SD.exists(name)) {
+      File in = PhzConfig::myfs.open(name, FILE_READ);
+      if (!in) continue;
+      const int n = in.read(buf, sizeof(buf));
+      in.close();
+      if (n <= 0) continue;
+      File out = SD.open(name, FILE_WRITE_BEGIN);
+      if (!out) continue;
+      const bool wrote = out.write(buf, n) == size_t(n);
+      out.close();
+      File back = SD.open(name, FILE_READ);
+      const bool same = wrote && back && int(back.read(check, n)) == n && !memcmp(check, buf, n);
+      if (back) back.close();
+      if (!same) {
+        SD.remove(name); // keep the internal copy; don't leave a bad one on the card
+        continue;
+      }
+    }
+    PhzConfig::myfs.remove(name);
+  }
 }
 
 // Reads bank b from one file system: 1 = loaded, 0 = no file, -1 = bad file.
@@ -1564,6 +1608,10 @@ FLASHMEM void XandNor::HandleAppEvent(OC::AppEvent event) {
 
 // Applies a preset load requested by the preset trigger, outside the interrupt.
 FLASHMEM void XandNor::Loop() {
+  if (tidy_pending) { // once per boot, before any bank writes
+    tidy_pending = false;
+    TidyInternalBanks();
+  }
   if (bank_dirty) { // migrated v2 slots: write them out as bank 00
     bank_dirty = false;
     WriteBank();

@@ -666,7 +666,9 @@ private:
   void SaveSlot(int slot);
   void LoadSlot(int slot);
   bool WriteBank();
-  void ReadBank(int b);
+  bool WriteBankTo(FS &fs);
+  int ReadBank(int b);
+  int ReadBankFrom(FS &fs, int b);
   void SelectBank(int b);
 };
 
@@ -828,7 +830,7 @@ FLASHMEM void XandNor::SaveSlot(int slot) {
   PackPatch(slots[slot]);
   slot_used |= 1 << slot;
   active_slot = slot;
-  message = WriteBank() ? "Saved" : "Not saved: no storage";
+  WriteBank(); // sets the message: where it saved, or that it failed
   message_frames = XandNorDefs::kMessageFrames;
 }
 
@@ -845,55 +847,98 @@ FLASHMEM void XandNor::LoadSlot(int slot) {
 // Banks are files of eight slots, on the SD card when one is ready, else the
 // platform's internal LittleFS. Saving a slot rewrites its bank's file.
 
-FLASHMEM static FS &BankFS() {
-  if (SDcard_Ready) return SD;
-  return PhzConfig::myfs;
-}
-
 FLASHMEM static void BankFileName(char *name, int b) {
   strcpy(name, "XNBANK00.DAT");
   name[6] = '0' + b / 10;
   name[7] = '0' + b % 10;
 }
 
-FLASHMEM bool XandNor::WriteBank() {
+// Writes the current bank to one file system, then reads it back and compares,
+// so a card that accepts writes but loses them on close counts as a failure.
+FLASHMEM bool XandNor::WriteBankTo(FS &fs) {
   using namespace XandNorDefs;
   char name[13];
   BankFileName(name, bank);
-  FS &fs = BankFS();
   fs.remove(name);
-  File f = fs.open(name, FILE_WRITE);
+  File f = fs.open(name, FILE_WRITE_BEGIN);
   if (!f) return false;
   const BankHeader h = {{'X', 'N', 'B', 'K'}, kBankVersion, slot_used, {0, 0}};
   bool ok = f.write(&h, sizeof(h)) == sizeof(h);
   ok = ok && f.write(slots, sizeof(slots)) == sizeof(slots);
   f.close();
+  if (!ok) return false;
+
+  f = fs.open(name, FILE_READ);
+  if (!f) return false;
+  BankHeader rh;
+  ok = f.read(&rh, sizeof(rh)) == sizeof(rh) && !memcmp(&rh, &h, sizeof(h));
+  uint8_t buf[sizeof(PackedPatch)];
+  for (int i = 0; ok && i < kNumSlots; ++i)
+    ok = f.read(buf, sizeof(buf)) == sizeof(buf) && !memcmp(buf, &slots[i], sizeof(buf));
+  f.close();
   return ok;
 }
 
-// Loads bank b into the slots; a missing or unreadable file is an empty bank.
-FLASHMEM void XandNor::ReadBank(int b) {
+// SD card first; if that fails (or there's no card), the internal flash.
+FLASHMEM bool XandNor::WriteBank() {
+  if (SDcard_Ready && WriteBankTo(SD)) { message = "Saved (SD)"; return true; }
+  if (WriteBankTo(PhzConfig::myfs)) { message = "Saved (Int)"; return true; }
+  message = "Save failed";
+  return false;
+}
+
+// Reads bank b from one file system: 1 = loaded, 0 = no file, -1 = bad file.
+FLASHMEM int XandNor::ReadBankFrom(FS &fs, int b) {
+  using namespace XandNorDefs;
+  char name[13];
+  BankFileName(name, b);
+  File f = fs.open(name, FILE_READ);
+  if (!f) return 0;
+  BankHeader h;
+  const bool ok = f.read(&h, sizeof(h)) == sizeof(h) && !memcmp(h.magic, "XNBK", 4) &&
+                  h.version == kBankVersion && f.read(slots, sizeof(slots)) == sizeof(slots);
+  f.close();
+  if (!ok) return -1;
+  slot_used = h.slot_used;
+  return 1;
+}
+
+// Loads bank b into the slots, from the SD card first, then internal flash.
+// No file means an empty bank. Returns ReadBankFrom()'s result.
+FLASHMEM int XandNor::ReadBank(int b) {
   using namespace XandNorDefs;
   memset(slots, 0, sizeof(slots));
   slot_used = 0;
-  char name[13];
-  BankFileName(name, b);
-  File f = BankFS().open(name, FILE_READ);
-  if (!f) return;
-  BankHeader h;
-  if (f.read(&h, sizeof(h)) == sizeof(h) && !memcmp(h.magic, "XNBK", 4) &&
-      h.version == kBankVersion && f.read(slots, sizeof(slots)) == sizeof(slots)) {
-    slot_used = h.slot_used;
-  } else {
-    memset(slots, 0, sizeof(slots));
+  int r = SDcard_Ready ? ReadBankFrom(SD, b) : 0;
+  if (r != 1) {
+    const int r2 = ReadBankFrom(PhzConfig::myfs, b);
+    if (r2 != 0) r = r2;
   }
-  f.close();
+  if (r != 1) { // nothing usable: leave the bank empty
+    memset(slots, 0, sizeof(slots));
+    slot_used = 0;
+  }
+  return r;
 }
 
 FLASHMEM void XandNor::SelectBank(int b) {
   bank = b;
-  ReadBank(b);
+  const int r = ReadBank(b);
   active_slot = -1;
+  if (r < 0) {
+    message = "Read error";
+  } else if (!slot_used) {
+    message = "Empty bank";
+  } else {
+    // "N saved" for the slots this bank holds
+    static char text[12];
+    int n = 0;
+    for (int i = 0; i < XandNorDefs::kNumSlots; ++i) n += (slot_used >> i) & 1;
+    text[0] = '0' + n;
+    strcpy(text + 1, " saved");
+    message = text;
+  }
+  message_frames = XandNorDefs::kMessageFrames;
 }
 
 // -- UI ----------------------------------------------------------------------

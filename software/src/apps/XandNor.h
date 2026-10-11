@@ -39,6 +39,7 @@ enum Page {
   PAGE_CHANNEL_C,
   PAGE_CHANNEL_D,
   PAGE_ROUTING,
+  PAGE_OUTPUTS,
   PAGE_CVMOD,
   PAGE_SCOPE,
   PAGE_COUNT
@@ -48,13 +49,23 @@ static constexpr int kNumChannels = 4;
 static constexpr int kNumOutputs = DAC_CHANNEL_COUNT;
 
 static const char * const kPageNames[PAGE_COUNT] = {
-  "Overview", "CH1", "CH2", "CH3", "CH4", "Routing", "CV Mod", "Scope"
+  "Overview", "CH1", "CH2", "CH3", "CH4", "Routing", "Outputs", "CV Mod", "Scope"
 };
 
 // Output functions. OUT and NOT read one channel; the rest combine two.
-enum Function { FN_OUT, FN_NOT, FN_AND, FN_NAND, FN_OR, FN_NOR, FN_XOR, FN_XNOR, FN_COUNT };
+// The first eight are logic; the rest (M7) keep state or output CV:
+//   TOGL flips on each rising edge of a; LTCH is set by a and reset by b;
+//   CNT and BIN read all four channels as a stepped CV (count, or CH1-CH4 as
+//   bits); ENV is an AD or ASR envelope on channel a.
+enum Function {
+  FN_OUT, FN_NOT, FN_AND, FN_NAND, FN_OR, FN_NOR, FN_XOR, FN_XNOR,
+  FN_TOGL, FN_LTCH, FN_CNT, FN_BIN, FN_ENV,
+  FN_COUNT
+};
+static constexpr int kNumLogicFns = FN_TOGL; // function-by-CV stays within these
 static const char * const kFunctionNames[FN_COUNT] = {
-  "OUT", "NOT", "AND", "NAND", "OR", "NOR", "XOR", "XNOR"
+  "OUT", "NOT", "AND", "NAND", "OR", "NOR", "XOR", "XNOR",
+  "TOGL", "LTCH", "CNT", "BIN", "ENV"
 };
 
 struct Route {
@@ -184,7 +195,20 @@ static constexpr int kStepsPerVolt = 8;
 // for two-input functions.
 enum RouteField { ROUTE_FN, ROUTE_A, ROUTE_B, ROUTE_FIELDS };
 
-static constexpr bool TwoInputs(uint8_t fn) { return fn != FN_OUT && fn != FN_NOT; }
+static constexpr bool TwoInputs(uint8_t fn) {
+  return (fn >= FN_AND && fn <= FN_XNOR) || fn == FN_LTCH;
+}
+static constexpr bool UsesA(uint8_t fn) { return fn != FN_CNT && fn != FN_BIN; }
+
+// Per-output settings for the M7 functions (Outputs page).
+enum CVStep : uint8_t { CVSTEP_SEMI, CVSTEP_THIRD, CVSTEP_VOLT, CVSTEP_COUNT };
+static const char * const kStepNames[CVSTEP_COUNT] = {"Semi", "1/3V", "1V"};
+static constexpr int kStepCV[CVSTEP_COUNT] = {ONE_OCTAVE / 12, ONE_OCTAVE / 3, ONE_OCTAVE};
+enum EnvMode : uint8_t { EMODE_AD, EMODE_ASR, EMODE_COUNT };
+static const char * const kEnvModeNames[EMODE_COUNT] = {"AD", "ASR"};
+static constexpr uint8_t kDefaultAttack = 4;  // 2 ms, a step on the length scale
+static constexpr uint8_t kDefaultDecay = 24;  // 200 ms
+static constexpr int32_t kEnvMax = 5 * ONE_OCTAVE * 256; // 5 V, 8 fractional bits
 
 // A patch as stored in EEPROM and in the preset slots.
 // Per-channel settings beyond source and length. The reserved bytes hold
@@ -226,7 +250,14 @@ struct PackedPatch {
   uint8_t preset_trig; // DigitalInputMap source byte: the trigger that loads it
   uint8_t reserved;
   // Storage v3: room for M7/M8 settings. Zero means "not set" throughout.
-  uint8_t ext[128];
+  struct OutputExtras {
+    uint8_t step;     // CVStep for CNT/BIN
+    uint8_t env_mode; // EnvMode
+    uint8_t attack;   // length-scale step; 0 = default
+    uint8_t decay;    // length-scale step; 0 = default
+    uint8_t reserved[4];
+  } out[8];
+  uint8_t ext_reserved[64]; // M8
 };
 static_assert(sizeof(PackedPatch) == 256, "PackedPatch layout changed");
 static constexpr size_t kPatchV2Size = 128; // the patch before ext existed
@@ -313,12 +344,39 @@ public:
     for (int o = 0; o < kNumOutputs; ++o) {
       const Route &r = routes[o];
       const bool a = gate[r.a], b = gate[r.b];
-      // Function by CV: +5 V at 100% depth moves through all eight functions.
+      const bool rise_a = a && !prev_a[o], rise_b = b && !prev_b[o];
+      prev_a[o] = a;
+      prev_b[o] = b;
+      // Function by CV: +5 V at 100% depth moves through the eight logic
+      // functions; the M7 functions aren't modulated.
       int fn = r.fn;
-      if (fn_cv[o].enabled()) fn = constrain(fn + fn_cv[o].In() * FN_COUNT / (5 * ONE_OCTAVE), 0, FN_COUNT - 1);
+      if (fn_cv[o].enabled() && fn < kNumLogicFns)
+        fn = constrain(fn + fn_cv[o].In() * kNumLogicFns / (5 * ONE_OCTAVE), 0, kNumLogicFns - 1);
       live_fn[o] = fn;
+
+      if (fn == FN_CNT || fn == FN_BIN) {
+        int n = 0;
+        for (int ch = 0; ch < kNumChannels; ++ch)
+          n += (fn == FN_CNT) ? gate[ch] : (gate[ch] << ch);
+        out_high[o] = n > 0;
+        Out(o, n * kStepCV[out_step[o]]);
+        continue;
+      }
+      if (fn == FN_ENV) {
+        EnvTick(o, a, rise_a);
+        out_high[o] = env_level[o] > 0;
+        Out(o, env_level[o] >> 8);
+        continue;
+      }
+
       bool v;
       switch (fn) {
+        case FN_TOGL: if (rise_a) toggled[o] = !toggled[o]; v = toggled[o]; break;
+        case FN_LTCH: // set by a, reset by b; reset wins a tie
+          if (rise_a) toggled[o] = true;
+          if (rise_b) toggled[o] = false;
+          v = toggled[o];
+          break;
         case FN_NOT:  v = !a; break;
         case FN_AND:  v = a && b; break;
         case FN_NAND: v = !(a && b); break;
@@ -390,6 +448,11 @@ private:
   uint8_t delay_count[XandNorDefs::kNumChannels];
   bool level_high[XandNorDefs::kNumChannels];
   uint8_t live_fn[8];
+  // M7 per-output settings and state
+  uint8_t out_step[8], env_mode[8], env_attack[8], env_decay[8];
+  bool prev_a[8], prev_b[8], toggled[8];
+  uint8_t env_phase[8]; // 0 idle, 1 attack, 2 decay/release, 3 sustain
+  int32_t env_level[8]; // CV units << 8
   bool chan_high[XandNorDefs::kNumChannels];
   bool out_high[XandNorDefs::kNumOutputs];
 
@@ -401,6 +464,8 @@ private:
   int route_cursor = 0; // routing page: output * ROUTE_FIELDS + field
   int mod_cursor = 0;   // CV Mod page
   int mod_scroll = 0;
+  int out_cursor = 0;   // Outputs page: output * 3 + field
+  int out_scroll = 0;
 
   // Presets
   XandNorDefs::PackedPatch slots[XandNorDefs::kNumSlots];
@@ -573,6 +638,38 @@ private:
     return UsToTicks(StepPosToUs(min(pos, int32_t(kNumLengths * 256))));
   }
 
+  // One envelope tick. AD: a rising edge runs attack then decay. ASR: attack
+  // on the rise, sustain while the gate is high, release (the decay time) when
+  // it falls. Segments are linear in voltage.
+  void EnvTick(int o, bool gate_high, bool rise) {
+    using namespace XandNorDefs;
+    const int32_t up = max(kEnvMax / int32_t(UsToTicks(kLengthUs[env_attack[o] - 1])), 1);
+    const int32_t down = max(kEnvMax / int32_t(UsToTicks(kLengthUs[env_decay[o] - 1])), 1);
+    if (rise) env_phase[o] = 1;
+    switch (env_phase[o]) {
+      case 1: // attack
+        env_level[o] += up;
+        if (env_level[o] >= kEnvMax) {
+          env_level[o] = kEnvMax;
+          env_phase[o] = (env_mode[o] == EMODE_ASR) ? 3 : 2;
+        }
+        if (env_mode[o] == EMODE_ASR && !gate_high) env_phase[o] = 2;
+        break;
+      case 3: // sustain (ASR)
+        if (!gate_high) env_phase[o] = 2;
+        break;
+      case 2: // decay / release
+        env_level[o] -= down;
+        if (env_level[o] <= 0) {
+          env_level[o] = 0;
+          env_phase[o] = 0;
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
   // One tick of scope capture: OR this tick's states into the current column;
   // start a sweep on the trigger (or at once when free-running).
   void ScopeSample() {
@@ -663,6 +760,7 @@ private:
   void PackPatch(XandNorDefs::PackedPatch &p) const;
   void UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_global = false);
   void DrawMod() const;
+  void DrawOutputs() const;
   void DrawScope(bool interactive = true) const;
   void ScopeFollowCursor();
   void DrawScrollBar(int scroll_pos, int rows) const;
@@ -704,7 +802,13 @@ FLASHMEM void XandNor::LoadDefaults() {
     level[ch] = false;
     threshold_dv[ch] = kDefaultThresholdDv;
   }
-  for (int o = 0; o < 8; ++o) fn_cv[o] = CVInputMap();
+  for (int o = 0; o < 8; ++o) {
+    fn_cv[o] = CVInputMap();
+    out_step[o] = CVSTEP_SEMI;
+    env_mode[o] = EMODE_AD;
+    env_attack[o] = kDefaultAttack;
+    env_decay[o] = kDefaultDecay;
+  }
   memset(&reserved_store, 0, sizeof(reserved_store));
   for (int o = 0; o < 8; ++o) routes[o] = kDefaultRoutes[o];
 }
@@ -735,6 +839,13 @@ FLASHMEM void XandNor::Start() {
   route_cursor = 0;
   mod_cursor = 0;
   mod_scroll = 0;
+  out_cursor = 0;
+  out_scroll = 0;
+  for (int o = 0; o < 8; ++o) {
+    prev_a[o] = prev_b[o] = toggled[o] = false;
+    env_phase[o] = 0;
+    env_level[o] = 0;
+  }
   for (int o = 0; o < 8; ++o) live_fn[o] = routes[o].fn;
   preset_cv = CVInputMap();
   preset_trig = DigitalInputMap{};
@@ -777,7 +888,13 @@ FLASHMEM void XandNor::PackPatch(XandNorDefs::PackedPatch &p) const {
     e.flags = (clock_length[ch] ? kFlagClockLength : 0) | (level[ch] ? kFlagLevel : 0)
             | uint8_t(threshold_dv[ch] << 2);
   }
-  for (int o = 0; o < 8; ++o) p.fn_cv[o] = fn_cv[o].Pack();
+  for (int o = 0; o < 8; ++o) {
+    p.fn_cv[o] = fn_cv[o].Pack();
+    p.out[o].step = out_step[o];
+    p.out[o].env_mode = env_mode[o];
+    p.out[o].attack = env_attack[o];
+    p.out[o].decay = env_decay[o];
+  }
   p.preset_cv = preset_cv.Pack();
   p.preset_trig = preset_trig.Pack() & 0xff; // source only
   for (int o = 0; o < 8; ++o) p.routes[o] = routes[o];
@@ -814,7 +931,14 @@ FLASHMEM void XandNor::UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_
     threshold_dv[ch] = (e.flags >> 2) ? (e.flags >> 2) : kDefaultThresholdDv;
     if (level[ch]) length[ch] = kLengthThru; // level mode lives below Thru
   }
-  for (int o = 0; o < 8; ++o) UnpackCV(fn_cv[o], p.fn_cv[o]);
+  for (int o = 0; o < 8; ++o) {
+    UnpackCV(fn_cv[o], p.fn_cv[o]);
+    const PackedPatch::OutputExtras &x = p.out[o];
+    out_step[o] = constrain(x.step, 0, CVSTEP_COUNT - 1);
+    env_mode[o] = constrain(x.env_mode, 0, EMODE_COUNT - 1);
+    env_attack[o] = x.attack ? constrain(x.attack, 1, kNumLengths) : kDefaultAttack;
+    env_decay[o] = x.decay ? constrain(x.decay, 1, kNumLengths) : kDefaultDecay;
+  }
   if (with_global) {
     UnpackCV(preset_cv, p.preset_cv);
     DigitalInputMap t{}; // value-initialised: see LoadDefaults()
@@ -1011,6 +1135,7 @@ FLASHMEM void XandNor::View() const {
     case PAGE_OVERVIEW: DrawOverview(); break;
     case PAGE_ROUTING:  DrawRouting(); break;
     case PAGE_CVMOD:      DrawMod(); break;
+    case PAGE_OUTPUTS:    DrawOutputs(); break;
     default:            DrawChannelPage(page - PAGE_CHANNEL_A); break;
   }
   DrawPageDots();
@@ -1277,6 +1402,47 @@ FLASHMEM void XandNor::DrawScrollBar(int scroll_pos, int rows) const {
   gfxRect(125, ty, 3, thumb);
 }
 
+// Outputs page: a row per output with the settings its function needs.
+// CNT/BIN: step size. ENV: mode, attack, decay. Others have none.
+static constexpr int OutputFields(uint8_t fn) {
+  return fn == XandNorDefs::FN_ENV ? 3 : (fn == XandNorDefs::FN_CNT || fn == XandNorDefs::FN_BIN) ? 1 : 0;
+}
+static constexpr XandNorDefs::FieldPos OutputFieldPos(uint8_t fn, int f) {
+  return fn == XandNorDefs::FN_ENV
+    ? (f == 0 ? XandNorDefs::FieldPos{0, 36, 18} : f == 1 ? XandNorDefs::FieldPos{0, 58, 30}
+                                                         : XandNorDefs::FieldPos{0, 92, 30})
+    : XandNorDefs::FieldPos{0, 60, 24};
+}
+
+FLASHMEM void XandNor::DrawOutputs() const {
+  using namespace XandNorDefs;
+  for (int o = out_scroll; o < out_scroll + kVisibleRows && o < kNumOutputs; ++o) {
+    const int y = 13 + (o - out_scroll) * 9;
+    const char name[2] = { char('A' + o), '\0' };
+    gfxPrint(1, y, name);
+    const uint8_t fn = routes[o].fn;
+    gfxPrint(10, y, kFunctionNames[fn]);
+    if (fn == FN_CNT || fn == FN_BIN) {
+      gfxPrint(60, y, kStepNames[out_step[o]]);
+    } else if (fn == FN_ENV) {
+      gfxPrint(36, y, kEnvModeNames[env_mode[o]]);
+      gfxPos(58, y);
+      PrintMicros(kLengthUs[env_attack[o] - 1]);
+      gfxPos(92, y);
+      PrintMicros(kLengthUs[env_decay[o] - 1]);
+    } else {
+      gfxPrint(40, y, "-");
+    }
+  }
+  DrawScrollBar(out_scroll, kNumOutputs);
+  const int o = out_cursor / 3, f = out_cursor % 3;
+  const uint8_t fn = routes[o].fn;
+  if (f < OutputFields(fn) && o >= out_scroll && o < out_scroll + kVisibleRows) {
+    const FieldPos fp = OutputFieldPos(fn, f);
+    DrawFieldCursor(fp.x - 1, 13 + (o - out_scroll) * 9 + 8, fp.w);
+  }
+}
+
 FLASHMEM void XandNor::DrawMod() const {
   using namespace XandNorDefs;
   for (int r = mod_scroll; r < mod_scroll + kVisibleRows && r < kModRows; ++r) {
@@ -1311,7 +1477,7 @@ FLASHMEM void XandNor::DrawMod() const {
 FLASHMEM void XandNor::PrintRoute(int x, int y, const XandNorDefs::Route &r) const {
   using namespace XandNorDefs;
   gfxPrint(x, y, kFunctionNames[r.fn]);
-  gfxPrint(x + 28, y, r.a + 1);
+  if (UsesA(r.fn)) gfxPrint(x + 28, y, r.a + 1);
   if (TwoInputs(r.fn)) gfxPrint(x + 40, y, r.b + 1);
 }
 
@@ -1427,14 +1593,27 @@ FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
     int c = route_cursor;
     do {
       c += (direction > 0) ? 1 : -1;
-    } while (c >= 0 && c <= last && c % ROUTE_FIELDS == ROUTE_B &&
-             !TwoInputs(routes[c / ROUTE_FIELDS].fn));
+    } while (c >= 0 && c <= last &&
+             ((c % ROUTE_FIELDS == ROUTE_B && !TwoInputs(routes[c / ROUTE_FIELDS].fn)) ||
+              (c % ROUTE_FIELDS == ROUTE_A && !UsesA(routes[c / ROUTE_FIELDS].fn))));
     if (c >= 0 && c <= last) route_cursor = c;
     return;
   }
   if (page == PAGE_SCOPE) {
     scope_cursor = constrain(scope_cursor + direction, 0, SCOPE_FIELDS - 1);
     ScopeFollowCursor();
+    return;
+  }
+  if (page == PAGE_OUTPUTS) {
+    // Step through the fields that exist, skipping outputs with none.
+    int c = out_cursor;
+    do {
+      c += (direction > 0) ? 1 : -1;
+    } while (c >= 0 && c < kNumOutputs * 3 && c % 3 >= OutputFields(routes[c / 3].fn));
+    if (c >= 0 && c < kNumOutputs * 3) out_cursor = c;
+    const int row = out_cursor / 3;
+    if (row < out_scroll) out_scroll = row;
+    if (row >= out_scroll + kVisibleRows) out_scroll = row - kVisibleRows + 1;
     return;
   }
   if (page == PAGE_CVMOD) {
@@ -1469,6 +1648,21 @@ FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
     } else {
       uint8_t &t = scope_traces[scope_cursor - SCOPE_TRACE0];
       t = constrain(t + direction, 0, kScopeSignals - 1);
+    }
+    return;
+  }
+  if (page == PAGE_OUTPUTS && !preset_mode) {
+    const int o = out_cursor / 3, f = out_cursor % 3;
+    const uint8_t fn = routes[o].fn;
+    if (f >= OutputFields(fn)) return;
+    if (fn != FN_ENV) {
+      out_step[o] = constrain(out_step[o] + direction, 0, CVSTEP_COUNT - 1);
+    } else if (f == 0) {
+      env_mode[o] = constrain(env_mode[o] + direction, 0, EMODE_COUNT - 1);
+    } else if (f == 1) {
+      env_attack[o] = constrain(env_attack[o] + direction, 1, kNumLengths);
+    } else {
+      env_decay[o] = constrain(env_decay[o] + direction, 1, kNumLengths);
     }
     return;
   }

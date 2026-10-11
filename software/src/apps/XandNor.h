@@ -18,7 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 //
-// (X)AND (N)OR - four gate-length processors (channels CH1-CH4) feeding freely
+// (X)AND(N)OR - four gate-length processors (channels CH1-CH4) feeding freely
 // routed gate outputs. Each output carries a channel's gate, its inverse, or a
 // logic function (AND, NAND, OR, NOR, XOR, XNOR) of two channels.
 //
@@ -265,7 +265,7 @@ static const char * const kPresetHint = "Up:Save  Down:Load";
 
 } // namespace XandNorDefs
 
-OC_APP_CLASS(XandNor, TWOCCS("XN"), "(X)AND (N)OR", "Gate Logic"),
+OC_APP_CLASS(XandNor, TWOCCS("XN"), "(X)AND(N)OR", "Gate Logic"),
   public HSApplication {
 public:
   OC_APP_INTERFACE_DECLARE(XandNor, XandNorDefs::kStorageSize);
@@ -828,7 +828,7 @@ FLASHMEM void XandNor::View() const {
     DrawScope();
     return;
   }
-  gfxHeader("(X)AND (N)OR");
+  gfxHeader("(X)AND(N)OR");
   gfxPrint(128 - 6 * (int)strlen(kPageNames[page]) - 1, 1, kPageNames[page]);
 
   switch (page) {
@@ -913,8 +913,8 @@ FLASHMEM void XandNor::DrawArrow(int x, int y) const {
 FLASHMEM void XandNor::DrawChannelPage(int ch) const {
   using namespace XandNorDefs;
   // Live gate: a small box in the header, left of the page name.
-  gfxFrame(96, 2, 6, 6);
-  if (chan_high[ch]) gfxRect(97, 3, 4, 4);
+  gfxFrame(93, 1, 8, 8);
+  if (chan_high[ch]) gfxRect(94, 2, 6, 6);
 
   // A scrolling list: rows scroll so the cursor's row stays in view.
   for (int r = scroll; r < scroll + kVisibleRows && r < kChannelRows; ++r) {
@@ -1173,7 +1173,7 @@ FLASHMEM void XandNor::DrawRouting() const {
 // slots carry a dot, and the active slot is framed twice.
 FLASHMEM void XandNor::DrawPresets() const {
   using namespace XandNorDefs;
-  gfxHeader("(X)AND (N)OR");
+  gfxHeader("(X)AND(N)OR");
   gfxPrint(128 - 6 * 7 - 1, 1, "Presets");
   for (int i = 0; i < kNumSlots; ++i) {
     const int x = 4 + (i % 4) * 31;

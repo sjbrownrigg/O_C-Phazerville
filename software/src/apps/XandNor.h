@@ -2054,6 +2054,14 @@ FLASHMEM void XandNor::HandleButtonEvent(const UI::Event &event) {
   // Audio page: every button goes to the audio engine, as in Quadrants. A or B
   // pressed at its top level hands back: A to the previous page, B to the next.
   if (page == XandNorDefs::PAGE_AUDIO && !preset_mode) {
+    // The audio engine only uses short presses, so long presses keep our
+    // shortcuts here: A or Y for presets, X for Routing.
+    if (event.type == UI::EVENT_BUTTON_LONG_PRESS) {
+      if (event.control == OC::CONTROL_BUTTON_A || event.control == OC::CONTROL_BUTTON_Y)
+        OnUpButtonLongPress();
+      if (event.control == OC::CONTROL_BUTTON_X) ToggleRouting();
+      return;
+    }
     if (event.control == OC::CONTROL_BUTTON_L || event.control == OC::CONTROL_BUTTON_R) {
       audio_app.HandleEncoderButtonEvent(event);
     } else if (audio_app.HandleButtonEvent(event)) {

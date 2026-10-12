@@ -299,10 +299,20 @@ static constexpr uint32_t kMessageMs = 2500; // how long "Saved" etc. stay up
 // over the column's time so short pulses still show at slow timebases.
 static constexpr int kScopeCols = 114;   // x = 14..127, after the labels
 static constexpr int kScopeTraces = 8;
-static constexpr int kScopeSignals = 1 + kNumChannels + 8; // off, CH1-4, A-H
+// Trace signals: 0 off, 1-4 CH1-CH4, 5-12 outputs A-H (on/off), 13-20 CV
+// inputs 1-8 (voltage, labelled V1-V8 so as not to clash with C1-C4).
+static constexpr int kScopeCVInputs = 8;
+static constexpr int kScopeFirstCV = 1 + kNumChannels + 8;
+static constexpr int kScopeSignals = kScopeFirstCV + kScopeCVInputs;
+// CV traces store a column's lowest and highest voltage as int8, 72 CV units
+// (about 47 mV) per step; drawn over -5..+5 V across the trace's height.
+static constexpr int kScopeCVScale = 72;
+static constexpr int kScopeCVRange = 5 * ONE_OCTAVE / kScopeCVScale; // 5 V
 static constexpr uint8_t kDefaultTraces[kScopeTraces] = {1, 2, 3, 4, 9, 10, 11, 12}; // C1-C4, E-H
 // Timebase: 0 = Auto (two trigger periods per screen), else ms per screen.
-static constexpr uint16_t kScopeSpanMs[] = {0, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000};
+static constexpr uint16_t kScopeSpanMs[] = {
+  0, 5, 10, 15, 20, 30, 50, 75, 100, 150, 200, 300, 500, 750,
+  1000, 1500, 2000, 3000, 5000, 7500, 10000};
 static constexpr int kScopeSpans = sizeof(kScopeSpanMs) / sizeof(kScopeSpanMs[0]);
 static constexpr uint16_t kScopeFreeSpanMs = 1000; // Auto with no tempo yet
 // Roll + Auto: a fixed span, so the scroll speed never depends on the clock
@@ -311,9 +321,14 @@ static constexpr uint16_t kRollAutoSpanMs = 2000;
 // Roll scrolls the picture; Sweep redraws it in place as new columns arrive;
 // Trig captures one sweep per trigger. Roll and Sweep capture continuously.
 enum ScopeMode : uint8_t { SCOPE_ROLL, SCOPE_SWEEP, SCOPE_TRIGGERED, SCOPE_MODES };
-static const char * const kScopeModeNames[SCOPE_MODES] = {"Roll", "Sweep", "Trig"};
+static const char * const kScopeModeNames[SCOPE_MODES] = {"Roll", "Swp", "Trig"};
 static constexpr int kSweepGap = 0; // blank columns ahead of the write point (0 = none)
-enum ScopeField { SCOPE_MODE, SCOPE_TRIG, SCOPE_SPAN, SCOPE_TRACE0, SCOPE_FIELDS = SCOPE_TRACE0 + kScopeTraces };
+// Capture: Peak ORs a column's states (no pulse missed) and keeps a CV's range;
+// Sample takes the state at the column's end, as the Scope applet does.
+enum ScopeField {
+  SCOPE_MODE, SCOPE_TRIG, SCOPE_SPAN, SCOPE_CAPTURE,
+  SCOPE_TRACE0, SCOPE_FIELDS = SCOPE_TRACE0 + kScopeTraces
+};
 
 // Up/Down are labelled A/B on the Teensy 4.1 (ORN8) panel.
 #ifdef ARDUINO_TEENSY41
@@ -512,6 +527,11 @@ private:
   uint32_t scope_col_ticks = 0, scope_tick = 0;
   uint16_t scope_acc = 0;
   uint32_t scope_last_trig = 0, scope_period = 0;
+  bool scope_peak = true;         // Peak or Sample capture
+  // CV traces: each column's lowest and highest value (int8, kScopeCVScale)
+  int8_t scope_cv_cap[2][XandNorDefs::kScopeCVInputs][XandNorDefs::kScopeCols];
+  int8_t scope_cv_disp[2][XandNorDefs::kScopeCVInputs][XandNorDefs::kScopeCols];
+  int8_t scope_cv_acc[2][XandNorDefs::kScopeCVInputs]; // [0] low, [1] high
   const char *message = "";
 
   // Advances channel ch by one tick and returns its gate.
@@ -717,23 +737,47 @@ private:
       scope_col = 0;
       scope_tick = 0;
       scope_acc = 0;
+      for (int i = 0; i < kScopeCVInputs; ++i) {
+        scope_cv_acc[0][i] = 127;
+        scope_cv_acc[1][i] = -128;
+      }
     }
-    scope_acc |= mask;
+    // Peak keeps every pulse and each CV's range; Sample keeps the last tick.
+    const bool sample = !scope_peak;
+    scope_acc = sample ? mask : (scope_acc | mask);
+    for (int i = 0; i < kScopeCVInputs; ++i) {
+      const int8_t v = constrain(HS::frame.In(i) / kScopeCVScale, -128, 127);
+      if (sample || v < scope_cv_acc[0][i]) scope_cv_acc[0][i] = v;
+      if (sample || v > scope_cv_acc[1][i]) scope_cv_acc[1][i] = v;
+    }
     if (++scope_tick < scope_col_ticks) return;
 
     if (scope_mode != SCOPE_TRIGGERED) { // Roll and Sweep write a ring
       if (!scope_hold) {
         scope_disp[scope_head] = scope_acc;
+        for (int i = 0; i < kScopeCVInputs; ++i) {
+          scope_cv_disp[0][i][scope_head] = scope_cv_acc[0][i];
+          scope_cv_disp[1][i][scope_head] = scope_cv_acc[1][i];
+        }
         scope_head = (scope_head + 1) % kScopeCols;
       }
       scope_col = -1; // recompute the column time each column
       return;
     }
+    for (int i = 0; i < kScopeCVInputs; ++i) {
+      scope_cv_cap[0][i][scope_col] = scope_cv_acc[0][i];
+      scope_cv_cap[1][i][scope_col] = scope_cv_acc[1][i];
+      scope_cv_acc[0][i] = 127;
+      scope_cv_acc[1][i] = -128;
+    }
     scope_cap[scope_col++] = scope_acc;
     scope_acc = 0;
     scope_tick = 0;
     if (scope_col >= kScopeCols) {
-      if (!scope_hold) memcpy(scope_disp, scope_cap, sizeof(scope_disp));
+      if (!scope_hold) {
+        memcpy(scope_disp, scope_cap, sizeof(scope_disp));
+        memcpy(scope_cv_disp, scope_cv_cap, sizeof(scope_cv_disp));
+      }
       scope_col = -1;
     }
   }
@@ -880,7 +924,10 @@ FLASHMEM void XandNor::Start() {
   scope_zoom = 0;
   scope_win = 0;
   scope_col = -1;
+  scope_peak = true;
   memset(scope_disp, 0, sizeof(scope_disp));
+  memset(scope_cv_disp[0], 127, sizeof(scope_cv_disp[0])); // low > high = empty
+  memset(scope_cv_disp[1], -128, sizeof(scope_cv_disp[1]));
   pending_slot = -1;
 }
 
@@ -1521,13 +1568,20 @@ FLASHMEM void XandNor::DrawScope(bool interactive) const {
   if (interactive) {
     top = 8;
     gfxPrint(1, 0, kScopeModeNames[scope_mode]);
-    gfxPrint(36, 0, scope_trig.InputName());
-    gfxPos(60, 0);
+    gfxPrint(30, 0, scope_trig.InputName());
+    gfxPos(54, 0);
     const uint16_t ms = kScopeSpanMs[scope_span];
-    if (!ms) gfxPrint("Auto");
-    else if (ms < 1000) { gfxPrint(ms); gfxPrint("ms"); }
-    else { gfxPrint(ms / 1000); gfxPrint("s"); }
-    if (scope_hold) gfxPrint(98, 0, "HOLD");
+    if (!ms) {
+      gfxPrint("Auto");
+    } else if (ms < 1000) {
+      gfxPrint(ms); gfxPrint("ms");
+    } else {
+      gfxPrint(ms / 1000);
+      if (ms % 1000) { gfxPrint("."); gfxPrint(ms % 1000 / 100); }
+      gfxPrint("s");
+    }
+    gfxPrint(88, 0, scope_peak ? "Pk" : "Sm");
+    if (scope_hold) gfxPrint(104, 0, "HOLD");
   }
 
   // Zoom: 8, 4, 2 or 1 traces share the space below the status line.
@@ -1538,11 +1592,35 @@ FLASHMEM void XandNor::DrawScope(bool interactive) const {
     const int sig = scope_traces[i];
     if (interactive) { // the screensaver drops the labels
       if (!sig) gfxPrint(1, y, "--");
+      else if (sig >= kScopeFirstCV) { gfxPrint(1, y, "V"); gfxPrint(sig - kScopeFirstCV + 1); }
       else if (sig <= kNumChannels) { gfxPrint(1, y, "C"); gfxPrint(sig); }
       else { const char n[2] = { char('A' + sig - 1 - kNumChannels), '\0' }; gfxPrint(4, y, n); }
       if (scope_cursor == SCOPE_TRACE0 + i) gfxInvert(0, y, 13, 7);
     }
     if (!sig) continue;
+
+    if (sig >= kScopeFirstCV) { // a CV input: its range in each column
+      const int in = sig - kScopeFirstCV;
+      const int first = scope_mode == SCOPE_ROLL ? scope_head : 0;
+      const int x0 = interactive ? 14 : 0;
+      const int width = interactive ? kScopeCols : 128;
+      const int mid = y + h / 2, half = max(h / 2 - 1, 1);
+      auto Y = [&](int v) { return constrain(mid - v * half / kScopeCVRange, y + 1, y + h - 2); };
+      int prev_y = -1;
+      for (int px = 0; px < width; ++px) {
+        const int c = (first + (interactive ? px : px * kScopeCols / 128)) % kScopeCols;
+        const int lo = scope_cv_disp[0][in][c], hi = scope_cv_disp[1][in][c];
+        if (lo > hi) { prev_y = -1; continue; } // column not captured yet
+        int ytop = Y(hi), ybot = Y(lo);
+        if (prev_y >= 0) { // join to the previous column
+          ytop = min(ytop, prev_y);
+          ybot = max(ybot, prev_y);
+        }
+        gfxLine(x0 + px, ytop, x0 + px, ybot);
+        prev_y = Y((lo + hi) / 2);
+      }
+      continue;
+    }
 
     const int bit = sig - 1; // C1-C4 = bits 0-3, A-H = bits 4-11
     // Roll draws the ring oldest-first, so the newest column is on the right.
@@ -1569,9 +1647,10 @@ FLASHMEM void XandNor::DrawScope(bool interactive) const {
   }
 
   if (!interactive) return;
-  if (scope_cursor == SCOPE_MODE) DrawFieldCursor(0, 7, 31);
-  else if (scope_cursor == SCOPE_TRIG) DrawFieldCursor(35, 7, 19);
-  else if (scope_cursor == SCOPE_SPAN) DrawFieldCursor(59, 7, 31);
+  if (scope_cursor == SCOPE_MODE) DrawFieldCursor(0, 7, 25);
+  else if (scope_cursor == SCOPE_TRIG) DrawFieldCursor(29, 7, 19);
+  else if (scope_cursor == SCOPE_SPAN) DrawFieldCursor(53, 7, 31);
+  else if (scope_cursor == SCOPE_CAPTURE) DrawFieldCursor(87, 7, 13);
 }
 
 // Keeps the selected trace on screen when zoomed in, scrolling the window.
@@ -1849,6 +1928,8 @@ FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
       scope_period = 0;
     } else if (scope_cursor == SCOPE_SPAN) {
       scope_span = constrain(scope_span + direction, 0, kScopeSpans - 1);
+    } else if (scope_cursor == SCOPE_CAPTURE) {
+      scope_peak = direction < 0; // Peak first, Sample to the right
     } else {
       uint8_t &t = scope_traces[scope_cursor - SCOPE_TRACE0];
       t = constrain(t + direction, 0, kScopeSignals - 1);

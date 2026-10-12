@@ -1719,8 +1719,8 @@ FLASHMEM void XandNor::DrawRouting() const {
 FLASHMEM void XandNor::DrawPresets() const {
   using namespace XandNorDefs;
   gfxHeader("(X)AND(N)OR");
-  gfxPrint(128 - 6 * 7 - 1, 1, "Bank ");
-  if (bank < 10) gfxPrint("0");
+  // "Bank# 7", as in Quadrants' preset selector, right-aligned
+  gfxPrint(128 - 6 * (bank < 10 ? 7 : 8) - 1, 1, "Bank# ");
   gfxPrint(bank);
   for (int i = 0; i < kNumSlots; ++i) {
     const int x = 4 + (i % 4) * 31;

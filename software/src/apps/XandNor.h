@@ -146,14 +146,16 @@ static constexpr int kChannelRows = 12;
 enum ModField {
   MOD_FN_CV,          // + 2 * output: source; + 1: depth
   MOD_PRESET_CV = 16, MOD_PRESET_DEPTH, MOD_PRESET_TRIG,
+  MOD_PRESET_AUDIO, // whether preset loads also load their audio setup
   MOD_COUNT
 };
-static constexpr int kModRows = 10;
+static constexpr int kModRows = 11;
 static constexpr FieldPos ModFieldPos(int f) {
   return f < MOD_PRESET_CV ? FieldPos{uint8_t(f / 2), uint8_t(f % 2 ? 40 : 14), uint8_t(f % 2 ? 30 : 18)}
        : f == MOD_PRESET_CV ? FieldPos{8, 52, 18}
        : f == MOD_PRESET_DEPTH ? FieldPos{8, 88, 30}
-       : FieldPos{9, 52, 18};
+       : f == MOD_PRESET_TRIG ? FieldPos{9, 52, 18}
+       : FieldPos{10, 52, 18};
 }
 static constexpr int kVisibleRows = 5;
 static const char * const kRowLabels[kChannelRows] = {
@@ -398,7 +400,9 @@ public:
     }
     ScopeSample();
 #ifdef XANDNOR_AUDIO
-    audio_app.Controller(); // audio applets follow CV and triggers here too
+    // Audio applets follow CV and triggers here too, except while a preset
+    // load or save is changing the setup from the main loop.
+    if (!audio_busy) audio_app.Controller();
 #endif
   }
 
@@ -434,6 +438,8 @@ private:
   // alone, so a CV-driven load can't change what drives the next one.
   CVInputMap preset_cv;
   DigitalInputMap preset_trig;
+  bool preset_audio = true; // preset loads include the audio setup (global)
+  volatile bool audio_busy = false; // main loop is changing the audio setup
   volatile int8_t pending_slot = -1; // set by Controller(), loaded by Loop(); -2 = next
   XandNorDefs::Route routes[8];
   XandNorDefs::PackedPatch reserved_store; // keeps unknown reserved bytes on resave
@@ -781,6 +787,10 @@ private:
   int ReadBank(int b);
   int ReadBankFrom(FS &fs, int b);
   void TidyInternalBanks();
+#ifdef XANDNOR_AUDIO
+  bool SaveSlotAudio(int slot);
+  void LoadSlotAudio(int slot);
+#endif
   void SelectBank(int b);
 };
 
@@ -907,6 +917,7 @@ FLASHMEM void XandNor::PackPatch(XandNorDefs::PackedPatch &p) const {
   }
   p.preset_cv = preset_cv.Pack();
   p.preset_trig = preset_trig.Pack() & 0xff; // source only
+  p.ext_reserved[0] = preset_audio ? 0 : 1;  // stored inverted: zero = default On
   for (int o = 0; o < 8; ++o) p.routes[o] = routes[o];
 }
 
@@ -954,6 +965,7 @@ FLASHMEM void XandNor::UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_
     DigitalInputMap t{}; // value-initialised: see LoadDefaults()
     t.Unpack(p.preset_trig);
     preset_trig = t;
+    preset_audio = !(p.ext_reserved[0] & 1);
   }
   for (int o = 0; o < 8; ++o) {
     Route r = p.routes[o];
@@ -969,13 +981,22 @@ FLASHMEM void XandNor::SaveSlot(int slot) {
   slot_used |= 1 << slot;
   active_slot = slot;
   WriteBank(); // sets the message and its [SD]/[Int] badge
+#ifdef XANDNOR_AUDIO
+  if (!SaveSlotAudio(slot)) { message = "Audio not saved"; message_badge = nullptr; }
+#endif
   message_until = millis() + XandNorDefs::kMessageMs;
 }
 
 // An empty slot loads the default patch.
 FLASHMEM void XandNor::LoadSlot(int slot) {
-  if (slot_used & (1 << slot)) UnpackPatch(slots[slot]);
-  else LoadDefaults();
+  if (slot_used & (1 << slot)) {
+    UnpackPatch(slots[slot]);
+#ifdef XANDNOR_AUDIO
+    if (preset_audio) LoadSlotAudio(slot);
+#endif
+  } else {
+    LoadDefaults();
+  }
   active_slot = slot;
   message = (slot_used & (1 << slot)) ? "Loaded" : "Defaults";
   message_badge = nullptr;
@@ -1043,36 +1064,186 @@ FLASHMEM bool XandNor::WriteBank() {
 // any the card lacks (verifying the copy) and deletes the internal file. If the
 // card already has the bank, the internal copy is stale and just goes. A copy
 // that fails verification leaves the internal file in place.
+// Copies one file from the internal flash to the SD card in chunks, reading
+// the copy back to compare, then deletes the internal file. A file the card
+// already has is stale internally and just goes. A failed copy keeps the
+// internal file and removes the partial one from the card.
+FLASHMEM static void MoveFileToSD(const char *name) {
+  if (!PhzConfig::myfs.exists(name)) return;
+  if (!SD.exists(name)) {
+    uint8_t buf[256], check[256];
+    File in = PhzConfig::myfs.open(name, FILE_READ);
+    File out = SD.open(name, FILE_WRITE_BEGIN);
+    bool ok = in && out;
+    int n;
+    while (ok && (n = in.read(buf, sizeof(buf))) > 0) ok = out.write(buf, n) == size_t(n);
+    if (out) out.close();
+    if (ok) { // compare the copy with the original
+      in.seek(0);
+      File back = SD.open(name, FILE_READ);
+      ok = bool(back);
+      while (ok && (n = in.read(buf, sizeof(buf))) > 0)
+        ok = int(back.read(check, n)) == n && !memcmp(check, buf, n);
+      if (back) back.close();
+    }
+    if (in) in.close();
+    if (!ok) {
+      SD.remove(name);
+      return;
+    }
+  }
+  PhzConfig::myfs.remove(name);
+}
+
+FLASHMEM static void AudioFileName(char *name, int b) {
+  strcpy(name, "XNAUD00.DAT");
+  name[5] = '0' + b / 10;
+  name[6] = '0' + b % 10;
+}
+
 FLASHMEM void XandNor::TidyInternalBanks() {
   using namespace XandNorDefs;
   if (!SDcard_Ready) return;
-  uint8_t buf[sizeof(BankHeader) + sizeof(slots)];
-  uint8_t check[sizeof(buf)];
   char name[13];
   for (int b = 0; b < kNumBanks; ++b) {
     BankFileName(name, b);
-    if (!PhzConfig::myfs.exists(name)) continue;
-    if (!SD.exists(name)) {
-      File in = PhzConfig::myfs.open(name, FILE_READ);
-      if (!in) continue;
-      const int n = in.read(buf, sizeof(buf));
-      in.close();
-      if (n <= 0) continue;
-      File out = SD.open(name, FILE_WRITE_BEGIN);
-      if (!out) continue;
-      const bool wrote = out.write(buf, n) == size_t(n);
-      out.close();
-      File back = SD.open(name, FILE_READ);
-      const bool same = wrote && back && int(back.read(check, n)) == n && !memcmp(check, buf, n);
-      if (back) back.close();
-      if (!same) {
-        SD.remove(name); // keep the internal copy; don't leave a bad one on the card
-        continue;
-      }
-    }
-    PhzConfig::myfs.remove(name);
+    MoveFileToSD(name);
+    AudioFileName(name, b);
+    MoveFileToSD(name);
   }
 }
+
+#ifdef XANDNOR_AUDIO
+// -- Audio in presets (M8b) ---------------------------------------------------
+// The audio engine keeps its setup private, but saves and loads presets through
+// the platform config store (PhzConfig), keyed by preset number. Quadrants uses
+// all 32 numbers, so the audio keys of one (kScratchPreset) are backed up, used
+// to capture or apply a setup, and restored, leaving Quadrants' data unchanged.
+// A setup is the 76 audio keys: the stereo flags, an applet ID per slot and
+// side, and each applet's settings. Each bank has a companion file of eight.
+namespace XandNorAudio {
+static constexpr int kScratchPreset = 31;
+static constexpr int kCfg = HemisphereAudioApplet::CONFIG_SIZE;
+static constexpr int kSlots = NUM_SLOTS;
+static constexpr int kKeys = 1 + 2 * kSlots + kSlots + 2 * kSlots * kCfg + kSlots * kCfg;
+// The i-th audio key below the preset number: (section << 8) | index, sections
+// as in AudioAppletSubapp: 1 main, 2 mono IDs, 3 stereo IDs, 4 mono and 5
+// stereo applet settings.
+static constexpr uint16_t Key(int i) {
+  return i < 1 ? (1 << 8)
+       : i < 1 + 2 * kSlots ? ((2 << 8) | (i - 1))
+       : i < 1 + 3 * kSlots ? ((3 << 8) | (i - 1 - 2 * kSlots))
+       : i < 1 + 3 * kSlots + 2 * kSlots * kCfg ? ((4 << 8) | (i - 1 - 3 * kSlots))
+       : ((5 << 8) | (i - 1 - 3 * kSlots - 2 * kSlots * kCfg));
+}
+static_assert(kKeys == 76, "audio key count changed: check AudioAppletSubapp's layout");
+struct Snapshot { uint64_t v[kKeys]; }; // 0 = key absent
+struct File_ {
+  char magic[4];   // "XNAU"
+  uint8_t version; // 1
+  uint8_t valid;   // bit per slot holding a setup
+  uint8_t pad[2];
+  Snapshot slot[XandNorDefs::kNumSlots];
+};
+DMAMEM static File_ file; // one bank's audio, read and written whole
+static constexpr uint16_t Base() { return uint16_t(kScratchPreset) << 11; }
+
+FLASHMEM static void Backup(uint64_t *saved, bool *had) {
+  for (int i = 0; i < kKeys; ++i) had[i] = PhzConfig::getValue(Base() | Key(i), saved[i]);
+}
+FLASHMEM static void Restore(const uint64_t *saved, const bool *had) {
+  for (int i = 0; i < kKeys; ++i) {
+    if (had[i]) PhzConfig::setValue(Base() | Key(i), saved[i]);
+    else PhzConfig::deleteKey(Base() | Key(i));
+  }
+}
+FLASHMEM static void Capture(Snapshot &s) {
+  uint64_t saved[kKeys]; bool had[kKeys];
+  Backup(saved, had);
+  audio_app.SavePreset(kScratchPreset);
+  for (int i = 0; i < kKeys; ++i)
+    if (!PhzConfig::getValue(Base() | Key(i), s.v[i])) s.v[i] = 0;
+  Restore(saved, had);
+}
+FLASHMEM static void Apply(const Snapshot &s) {
+  uint64_t saved[kKeys]; bool had[kKeys];
+  Backup(saved, had);
+  for (int i = 0; i < kKeys; ++i) {
+    if (s.v[i]) PhzConfig::setValue(Base() | Key(i), s.v[i]);
+    else PhzConfig::deleteKey(Base() | Key(i));
+  }
+  audio_app.LoadPreset(kScratchPreset);
+  Restore(saved, had);
+}
+
+FLASHMEM static bool ReadFrom(FS &fs, const char *name) {
+  File f = fs.open(name, FILE_READ);
+  if (!f) return false;
+  const bool ok = f.read(&file, sizeof(file)) == sizeof(file) &&
+                  !memcmp(file.magic, "XNAU", 4) && file.version == 1;
+  f.close();
+  return ok;
+}
+// Loads bank b's audio file (SD first); a missing or bad file is all empty.
+FLASHMEM static void Read(int b) {
+  char name[13];
+  AudioFileName(name, b);
+  if (!(SDcard_Ready && ReadFrom(SD, name)) && !ReadFrom(PhzConfig::myfs, name)) {
+    memset(&file, 0, sizeof(file));
+    memcpy(file.magic, "XNAU", 4);
+    file.version = 1;
+  }
+}
+FLASHMEM static bool WriteTo(FS &fs, const char *name) {
+  fs.remove(name);
+  File f = fs.open(name, FILE_WRITE_BEGIN);
+  if (!f) return false;
+  bool ok = f.write(&file, sizeof(file)) == sizeof(file);
+  f.close();
+  if (!ok) return false;
+  // read back and compare in chunks
+  f = fs.open(name, FILE_READ);
+  if (!f) return false;
+  uint8_t check[256];
+  const uint8_t *src = reinterpret_cast<const uint8_t *>(&file);
+  for (size_t done = 0; ok && done < sizeof(file); done += sizeof(check)) {
+    const size_t n = min(sizeof(check), sizeof(file) - done);
+    ok = size_t(f.read(check, n)) == n && !memcmp(check, src + done, n);
+  }
+  f.close();
+  return ok;
+}
+// Writes bank b's audio file: SD first (then any internal copy is stale), else
+// the internal flash.
+FLASHMEM static bool Write(int b) {
+  char name[13];
+  AudioFileName(name, b);
+  if (SDcard_Ready && WriteTo(SD, name)) {
+    PhzConfig::myfs.remove(name);
+    return true;
+  }
+  return WriteTo(PhzConfig::myfs, name);
+}
+} // namespace XandNorAudio
+
+FLASHMEM bool XandNor::SaveSlotAudio(int slot) {
+  XandNorAudio::Read(bank);
+  audio_busy = true;
+  XandNorAudio::Capture(XandNorAudio::file.slot[slot]);
+  audio_busy = false;
+  XandNorAudio::file.valid |= 1 << slot;
+  return XandNorAudio::Write(bank);
+}
+
+FLASHMEM void XandNor::LoadSlotAudio(int slot) {
+  XandNorAudio::Read(bank);
+  if (XandNorAudio::file.valid & (1 << slot)) {
+    audio_busy = true;
+    XandNorAudio::Apply(XandNorAudio::file.slot[slot]);
+    audio_busy = false;
+  }
+}
+#endif
 
 // Reads bank b from one file system: 1 = loaded, 0 = no file, -1 = bad file.
 FLASHMEM int XandNor::ReadBankFrom(FS &fs, int b) {
@@ -1488,11 +1659,14 @@ FLASHMEM void XandNor::DrawMod() const {
       gfxPrint(1, y, "Preset:");
       gfxPrint(52, y, preset_cv.InputName());
       PrintDepth(88, y, preset_cv);
-    } else {
+    } else if (r == 9) {
       gfxPrint(1, y, "Load on:");
       gfxPrint(52, y, preset_trig.InputName());
       // With no preset CV, each trigger steps to the next used slot.
       if (!preset_cv.enabled() && (preset_trig.Pack() & 0xff)) gfxPrint(76, y, "next");
+    } else {
+      gfxPrint(1, y, "Audio:"); // preset loads include the audio setup
+      gfxPrint(52, y, preset_audio ? "On" : "Off");
     }
   }
   DrawScrollBar(mod_scroll, kModRows);
@@ -1705,8 +1879,10 @@ FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
       preset_cv.ChangeSource(direction);
     } else if (mod_cursor == MOD_PRESET_DEPTH) {
       AdjustDepth(preset_cv, direction);
-    } else {
+    } else if (mod_cursor == MOD_PRESET_TRIG) {
       preset_trig.ChangeSource(direction);
+    } else {
+      preset_audio = direction > 0;
     }
     return;
   }

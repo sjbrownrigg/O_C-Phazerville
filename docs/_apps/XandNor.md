@@ -23,7 +23,7 @@ Press **A** / **B** to move between pages; the left encoder moves the cursor, th
 | **Audio** | The ORN8's audio applets, as in Quadrants; while on this page all buttons and encoders control audio, and A or B at its top level moves to the previous or next page. The audio setup is shared with Quadrants |
 | **Scope** | Eight on/off traces of channels and outputs, in Roll, Sweep or Trig mode; also the screensaver |
 
-Long-press **A** (or press **Y**) for the preset overlay: 100 banks of 8 slots, saved to the SD card or internal flash. Press **X** to jump to the Routing page and back.
+Long-press **A** (or press **Y**) for the preset overlay: 100 banks of 8 slots, saved to the SD card or internal flash. Saving a slot also stores the audio applet setup; loading applies it unless **Audio** is set to Off on the CV Mod page. Press **X** to jump to the Routing page and back.
 
 ### Output functions
 

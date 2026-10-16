@@ -126,17 +126,17 @@ enum ChannelField {
 };
 struct FieldPos { uint8_t row, x, w; };
 static constexpr FieldPos kFieldPos[FIELD_COUNT] = {
-  {0, 52, 18}, {0, 76, 18},
+  {0, 52, 24}, {0, 80, 18},
   {1, 52, 31},
-  {2, 52, 18}, {2, 88, 30},
+  {2, 52, 24}, {2, 88, 30},
   {3, 52, 30},
   {4, 52, 31},
-  {5, 52, 18}, {5, 88, 30},
+  {5, 52, 24}, {5, 88, 30},
   {6, 52, 24},
-  {7, 52, 18}, {7, 88, 30},
+  {7, 52, 24}, {7, 88, 30},
   {8, 52, 12},
-  {9, 52, 18}, {9, 88, 30},
-  {10, 52, 18}, {10, 88, 30},
+  {9, 52, 24}, {9, 88, 30},
+  {10, 52, 24}, {10, 88, 30},
   {11, 52, 37},
 };
 static constexpr int kChannelRows = 12;
@@ -151,10 +151,10 @@ enum ModField {
 };
 static constexpr int kModRows = 11;
 static constexpr FieldPos ModFieldPos(int f) {
-  return f < MOD_PRESET_CV ? FieldPos{uint8_t(f / 2), uint8_t(f % 2 ? 40 : 14), uint8_t(f % 2 ? 30 : 18)}
-       : f == MOD_PRESET_CV ? FieldPos{8, 52, 18}
+  return f < MOD_PRESET_CV ? FieldPos{uint8_t(f / 2), uint8_t(f % 2 ? 40 : 14), uint8_t(f % 2 ? 30 : 24)}
+       : f == MOD_PRESET_CV ? FieldPos{8, 52, 24}
        : f == MOD_PRESET_DEPTH ? FieldPos{8, 88, 30}
-       : f == MOD_PRESET_TRIG ? FieldPos{9, 52, 18}
+       : f == MOD_PRESET_TRIG ? FieldPos{9, 52, 24}
        : FieldPos{10, 52, 18};
 }
 static constexpr int kVisibleRows = 5;
@@ -457,7 +457,7 @@ private:
   bool level[XandNorDefs::kNumChannels];         // follow the source level, not edges
   uint8_t threshold_dv[XandNorDefs::kNumChannels]; // level threshold, 0.1 V units
   // Another channel as the trigger source, instead of source[]: 0 = none,
-  // else 1 + 2 * channel + end (end: its gate's falling edge). Shown C1> / C1<.
+  // else 1 + 2 * channel + end (end: its gate's falling edge). Shown CH1> / CH1<.
   uint8_t chan_src[XandNorDefs::kNumChannels];
   // Channel edges from the previous tick, for channel sources
   bool chan_was[XandNorDefs::kNumChannels], chan_rose[XandNorDefs::kNumChannels],
@@ -1468,6 +1468,17 @@ FLASHMEM void XandNor::PrintMicros(uint32_t us) const {
   }
 }
 
+// Input names as the platform gives them, except CV inputs read "CV 1" rather
+// than "C 1", matching the panel.
+FLASHMEM static void PrintInputName(int x, int y, const char *name) {
+  if (name[0] == 'C' && name[1] == ' ') {
+    gfxPrint(x, y, "CV");
+    gfxPrint(name + 1);
+  } else {
+    gfxPrint(x, y, name);
+  }
+}
+
 FLASHMEM void XandNor::PrintDepth(int x, int y, const CVInputMap &m) const {
   const int tenths = Atten(m.attenuversion);
   gfxPos(x, y);
@@ -1502,17 +1513,17 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
     gfxPrint(1, y, (r == 3 && level[ch]) ? "Thresh:" : kRowLabels[r]);
     switch (r) {
       case 0:
-        if (chan_src[ch]) { // "C1>" a channel's start, "C1<" its end
-          gfxPrint(52, y, "C");
+        if (chan_src[ch]) { // "CH1>" a channel's start, "CH1<" its end
+          gfxPrint(52, y, "CH");
           gfxPrint((chan_src[ch] - 1) / 2 + 1);
           gfxPrint((chan_src[ch] - 1) % 2 ? "<" : ">");
         } else {
-          gfxPrint(52, y, source[ch].InputName());
+          PrintInputName(52, y, source[ch].InputName());
         }
-        PrintDiv(76, y, div_steps[ch]);
+        PrintDiv(80, y, div_steps[ch]);
         if (div_cv[ch].enabled() && source[ch].div_mult.steps != div_steps[ch]) {
-          DrawArrow(96, y);
-          PrintDiv(102, y, source[ch].div_mult.steps);
+          DrawArrow(100, y);
+          PrintDiv(106, y, source[ch].div_mult.steps);
         }
         break;
       case 1:
@@ -1533,7 +1544,7 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
         }
         break;
       case 2:
-        gfxPrint(52, y, length_cv[ch].InputName());
+        PrintInputName(52, y, length_cv[ch].InputName());
         PrintDepth(88, y, length_cv[ch]);
         break;
       case 3:
@@ -1560,7 +1571,7 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
         break;
       }
       case 5:
-        gfxPrint(52, y, delay_cv[ch].InputName());
+        PrintInputName(52, y, delay_cv[ch].InputName());
         PrintDepth(88, y, delay_cv[ch]);
         break;
       case 6:
@@ -1573,7 +1584,7 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
         }
         break;
       case 7:
-        gfxPrint(52, y, prob_cv[ch].InputName());
+        PrintInputName(52, y, prob_cv[ch].InputName());
         PrintDepth(88, y, prob_cv[ch]);
         break;
       case 8:
@@ -1584,11 +1595,11 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
         }
         break;
       case 9:
-        gfxPrint(52, y, ratchet_cv[ch].InputName());
+        PrintInputName(52, y, ratchet_cv[ch].InputName());
         PrintDepth(88, y, ratchet_cv[ch]);
         break;
       case 10:
-        gfxPrint(52, y, div_cv[ch].InputName());
+        PrintInputName(52, y, div_cv[ch].InputName());
         PrintDepth(88, y, div_cv[ch]);
         break;
       default:
@@ -1613,8 +1624,8 @@ FLASHMEM void XandNor::DrawScope(bool interactive) const {
   if (interactive) {
     top = 8;
     gfxPrint(1, 0, kScopeModeNames[scope_mode]);
-    gfxPrint(30, 0, scope_trig.InputName());
-    gfxPos(54, 0);
+    PrintInputName(30, 0, scope_trig.InputName());
+    gfxPos(56, 0);
     const uint16_t ms = kScopeSpanMs[scope_span];
     if (!ms) {
       gfxPrint("Auto");
@@ -1693,8 +1704,8 @@ FLASHMEM void XandNor::DrawScope(bool interactive) const {
 
   if (!interactive) return;
   if (scope_cursor == SCOPE_MODE) DrawFieldCursor(0, 7, 25);
-  else if (scope_cursor == SCOPE_TRIG) DrawFieldCursor(29, 7, 19);
-  else if (scope_cursor == SCOPE_SPAN) DrawFieldCursor(53, 7, 31);
+  else if (scope_cursor == SCOPE_TRIG) DrawFieldCursor(29, 7, 25);
+  else if (scope_cursor == SCOPE_SPAN) DrawFieldCursor(55, 7, 31);
   else if (scope_cursor == SCOPE_CAPTURE) DrawFieldCursor(87, 7, 13);
 }
 
@@ -1785,17 +1796,17 @@ FLASHMEM void XandNor::DrawMod() const {
       // "A  C 3  100%  > XOR": output, function CV, depth, function in use
       const char name[2] = { char('A' + r), '\0' };
       gfxPrint(1, y, name);
-      gfxPrint(14, y, fn_cv[r].InputName());
+      PrintInputName(14, y, fn_cv[r].InputName());
       PrintDepth(40, y, fn_cv[r]);
       if (fn_cv[r].enabled()) DrawArrow(74, y);
       gfxPrint(82, y, kFunctionNames[live_fn[r]]);
     } else if (r == 8) {
       gfxPrint(1, y, "Preset:");
-      gfxPrint(52, y, preset_cv.InputName());
+      PrintInputName(52, y, preset_cv.InputName());
       PrintDepth(88, y, preset_cv);
     } else if (r == 9) {
       gfxPrint(1, y, "Load on:");
-      gfxPrint(52, y, preset_trig.InputName());
+      PrintInputName(52, y, preset_trig.InputName());
       // With no preset CV, each trigger steps to the next used slot.
       if (!preset_cv.enabled() && (preset_trig.Pack() & 0xff)) gfxPrint(76, y, "next");
     } else {
@@ -1969,17 +1980,27 @@ FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
   if (row >= scroll + kVisibleRows) scroll = row - kVisibleRows + 1;
 }
 
-// The Source list: the platform's sources, then C1> C1< C2> C2< ... C4<.
+// The Source list: the platform's, with the channel sources inserted after
+// CV 8: ... CV 7, CV 8, CH1>, CH1<, ... CH4<, then the outputs, MIDI ...
 FLASHMEM void XandNor::ChangeChannelSource(int ch, int direction) {
   using namespace XandNorDefs;
+  DigitalInputMap &m = source[ch];
   if (chan_src[ch]) {
     const int v = chan_src[ch] + direction;
-    chan_src[ch] = v < 1 ? 0 : min(v, 2 * kNumChannels); // below C1> returns to the platform list
+    if (v < 1) { chan_src[ch] = 0; m.SetInput(ADC_CHANNEL_COUNT - 1); }       // back to CV 8
+    else if (v > 2 * kNumChannels) { chan_src[ch] = 0; m.SetOutput(0); }  // on to the first output
+    else chan_src[ch] = v;
     return;
   }
-  const uint32_t before = source[ch].Pack();
-  source[ch].ChangeSource(direction);
-  if (direction > 0 && source[ch].Pack() == before) chan_src[ch] = 1; // past its end
+  if (direction > 0 && m.source_type() == DigitalInputMap::TYPE_ADC && m.index() == ADC_CHANNEL_COUNT - 1) {
+    chan_src[ch] = 1; // CV 8 -> CH1>
+    return;
+  }
+  if (direction < 0 && m.source_type() == DigitalInputMap::TYPE_DAC && m.index() == 0) {
+    chan_src[ch] = 2 * kNumChannels; // first output -> CH4<
+    return;
+  }
+  m.ChangeSource(direction);
 }
 
 FLASHMEM static void AdjustDepth(CVInputMap &m, int direction) {

@@ -36,7 +36,7 @@ Each channel turns triggers into gates. The page is a scrolling list:
 
 | Row | Setting |
 | --- | --- |
-| **Source** | The trigger: TR 1–TR 4, a CV input (**CV 1**–**CV 8**), another channel, another output, or MIDI. The channels come straight after CV 8 in the list: **CH1>** fires when CH1's gate starts, **CH1<** when it ends, then CH2>, CH2< … CH4<. Next to it, the **divider**: turning right goes x1, x2, x3 … (multiply), turning left /2, /3 … (divide) |
+| **Source** | The trigger: TR 1–TR 4, a CV input (**CV 1**–**CV 8**), another channel, an output (**OutA**–**OutH**), a virtual output (**VrtI**–**VrtP**), or MIDI. The channels come straight after CV 8 in the list: **CH1>** fires when CH1's gate starts, **CH1<** when it ends, then CH2>, CH2< … CH4<. Next to it, the **divider**: turning right goes x1, x2, x3 … (multiply), turning left /2, /3 … (divide) |
 | **Length** | Gate length from 1 ms to 10 s, in ten steps per decade. Below 1 ms: **Thru** (the output follows the source while it is high) and **Level** (see below). Above 10 s: **Inf** (high until the next trigger). In Clock mode this row is a percentage instead |
 | **CV** | Length CV input and depth |
 | **Len by** | **Time** or **Clock**: in Clock mode Length is 1–100% of the measured time between triggers (after the divider), so gates keep their shape when the tempo changes. Until two triggers have been measured, the Time setting applies. In Level mode this row is **Thresh** |
@@ -56,6 +56,8 @@ A trigger that arrives while the gate is still high briefly drops the gate (240 
 **Channel sources.** Chaining on a channel's end (CH2 on **CH1<**, CH3 on **CH2<** …) makes sequential pulses from one trigger, with no patching; each link adds about 0.06 ms. A channel set to its own end (CH1 on **CH1<**) starts itself and retriggers as each gate ends: a free-running pulse source whose period is its length plus any delay. The divider, delay, probability and ratchets apply to channel sources too. In Thru or Level, the output follows the source channel's gate (inverted for **<**).
 
 **Level mode.** The channel is high while its source is above the threshold (0.1–6.3 V, default 1.2 V), with 0.2 V of hysteresis so it switches cleanly. With a CV input as the source, an LFO becomes a gate whose width follows the threshold. Delay, probability and ratchets don't apply in Level or Thru.
+
+**CV sources.** Every CV row offers the CV inputs (**CV 1**–**CV 8**) and also the outputs: **OutA**–**OutH** are (X)AND(N)OR's own outputs, read back one tick later, so one output can modulate a channel with no patch cable (for example an **ENV** on H as CH1's Length CV, or a **CNT** output as another channel's Prob CV). **VrtI**–**VrtP** are the platform's virtual outputs, shared with Quadrants: Quadrants' clock writes some of them, which doesn't run here, and some audio applets write CV to them (TuneTracker's detected pitch, for example), which does.
 
 ### CV scaling
 

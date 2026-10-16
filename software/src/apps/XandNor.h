@@ -1469,7 +1469,8 @@ FLASHMEM void XandNor::PrintMicros(uint32_t us) const {
 }
 
 // Input names as the platform gives them, except CV and trigger inputs read
-// "CV 1" and "TR 1" rather than "C 1" and "T 1", matching the O.R.N.8 panel.
+// "CV 1" and "TR 1" rather than "C 1" and "T 1", matching the O.R.N.8 panel,
+// and outputs "OutA" / virtual outputs "VrtI" rather than "#A" / "#I".
 FLASHMEM static void PrintInputName(int x, int y, const char *name) {
   if (name[0] == 'C' && name[1] == ' ') {
     gfxPrint(x, y, "CV");
@@ -1477,6 +1478,12 @@ FLASHMEM static void PrintInputName(int x, int y, const char *name) {
   } else if (name[0] == 'T' && name[1] == ' ') {
     gfxPrint(x, y, "TR");
     gfxPrint(name + 1);
+  } else if (name[0] == '#') {
+    // Outputs as sources: "OutA"-"OutH" for the jacks, "VrtI"-"VrtP" for the
+    // platform's virtual outputs (clock and audio applets).
+    gfxPrint(x, y, name[1] <= 'H' ? "Out" : "Vrt");
+    const char letter[2] = {name[1], '\0'};
+    gfxPrint(letter);
   } else {
     gfxPrint(x, y, name);
   }

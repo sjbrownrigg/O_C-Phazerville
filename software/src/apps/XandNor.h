@@ -521,15 +521,13 @@ private:
   uint8_t scope_head = 0;         // Roll: next column to write, i.e. the oldest
   uint8_t scope_zoom = 0;         // 8 >> zoom traces on screen: 8, 4, 2, 1
   uint8_t scope_win = 0;          // first trace on screen
-  uint16_t scope_cap[XandNorDefs::kScopeCols];  // being captured (Controller)
-  uint16_t scope_disp[XandNorDefs::kScopeCols]; // last complete sweep (display)
+  uint16_t scope_disp[XandNorDefs::kScopeCols]; // displayed columns, written as captured
   int scope_col = -1;             // -1 = waiting for a trigger
   uint32_t scope_col_ticks = 0, scope_tick = 0;
   uint16_t scope_acc = 0;
   uint32_t scope_last_trig = 0, scope_period = 0;
   bool scope_peak = true;         // Peak or Sample capture
   // CV traces: each column's lowest and highest value (int8, kScopeCVScale)
-  int8_t scope_cv_cap[2][XandNorDefs::kScopeCVInputs][XandNorDefs::kScopeCols];
   int8_t scope_cv_disp[2][XandNorDefs::kScopeCVInputs][XandNorDefs::kScopeCols];
   int8_t scope_cv_acc[2][XandNorDefs::kScopeCVInputs]; // [0] low, [1] high
   const char *message = "";
@@ -764,32 +762,23 @@ private:
       scope_col = -1; // recompute the column time each column
       return;
     }
-    for (int i = 0; i < kScopeCVInputs; ++i) {
-      scope_cv_cap[0][i][scope_col] = scope_cv_acc[0][i];
-      scope_cv_cap[1][i][scope_col] = scope_cv_acc[1][i];
-      scope_cv_acc[0][i] = 127;
-      scope_cv_acc[1][i] = -128;
-    }
-#ifdef XANDNOR_TRIG_PROGRESSIVE
-    // Trial: draw each triggered sweep as it's captured, not all at the end.
+    // Trig: each sweep starts at the trigger and is drawn as it's captured,
+    // overwriting the last sweep in place.
     if (!scope_hold) {
       scope_disp[scope_col] = scope_acc;
       for (int i = 0; i < kScopeCVInputs; ++i) {
-        scope_cv_disp[0][i][scope_col] = scope_cv_cap[0][i][scope_col];
-        scope_cv_disp[1][i][scope_col] = scope_cv_cap[1][i][scope_col];
+        scope_cv_disp[0][i][scope_col] = scope_cv_acc[0][i];
+        scope_cv_disp[1][i][scope_col] = scope_cv_acc[1][i];
       }
     }
-#endif
-    scope_cap[scope_col++] = scope_acc;
+    for (int i = 0; i < kScopeCVInputs; ++i) {
+      scope_cv_acc[0][i] = 127;
+      scope_cv_acc[1][i] = -128;
+    }
+    ++scope_col;
     scope_acc = 0;
     scope_tick = 0;
-    if (scope_col >= kScopeCols) {
-      if (!scope_hold) {
-        memcpy(scope_disp, scope_cap, sizeof(scope_disp));
-        memcpy(scope_cv_disp, scope_cv_cap, sizeof(scope_cv_disp));
-      }
-      scope_col = -1;
-    }
+    if (scope_col >= kScopeCols) scope_col = -1; // wait for the next trigger
   }
 
   // The level of a channel's source, for level mode: the CV of an input or

@@ -7,7 +7,7 @@ layout: default
 
 *(X)AND(N)OR* turns triggers into gates and combines them. Four gate channels (CH1–CH4) each take a trigger from any input and produce a gate from 1 ms to 10 s long, shaped by a divider, delay, probability and ratchets. Eight outputs (A–H) each carry a channel's gate, a logic combination of two channels, a toggle or latch, a stepped CV built from all four channels, or an envelope. Almost every setting can be modulated by CV.
 
-The app also hosts the ORN8's audio applets, has a built-in logic-analyser scope that doubles as its screensaver, and stores 100 banks of 8 presets on the SD card.
+The app also hosts the O.R.N.8's audio applets, has a built-in logic-analyser scope that doubles as its screensaver, and stores 100 banks of 8 presets on the SD card.
 
 Panel labels used here: outputs **A–H**, CV inputs **1–8**, trigger inputs **T1–T4**. The Up and Down buttons are labelled **A** and **B** on the O.R.N.8.
 
@@ -113,7 +113,7 @@ These preset settings are global: loading a slot doesn't change them.
 
 ## Audio
 
-The ORN8's audio applets, exactly as in Quadrants' audio setup. While (X)AND(N)OR is running, the audio applets follow CV and triggers here too, whichever page you are on.
+The O.R.N.8's audio applets, exactly as in Quadrants' audio setup. While (X)AND(N)OR is running, the audio applets follow CV and triggers here too, whichever page you are on.
 
 On this page all short presses of A, B, X and Y and both encoders go to the audio engine. Pressing **A** or **B** at its top level moves to the previous or next page. Long-press **A** or **Y** for presets, or **X** for Routing.
 

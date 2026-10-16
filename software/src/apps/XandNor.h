@@ -350,6 +350,13 @@ public:
   void Controller() {
     using namespace XandNorDefs;
     bool gate[kNumChannels];
+    // Last tick's channel edges, so channel sources see every channel alike
+    // (one tick, 60 us, later) whatever the processing order.
+    for (int ch = 0; ch < kNumChannels; ++ch) {
+      chan_rose[ch] = chan_high[ch] && !chan_was[ch];
+      chan_fell[ch] = !chan_high[ch] && chan_was[ch];
+      chan_was[ch] = chan_high[ch];
+    }
     for (int ch = 0; ch < kNumChannels; ++ch) gate[ch] = ProcessChannel(ch);
 
     // Preset by CV: the trigger picks a slot (by CV, or the next used slot
@@ -427,6 +434,7 @@ public:
   void OnUpButtonLongPress();
   void OnDownButtonPress();
   void ToggleRouting();
+  void ChangeChannelSource(int ch, int direction);
   void OnLeftEncoderMove(int direction);
   void OnRightEncoderMove(int direction);
 
@@ -448,6 +456,12 @@ private:
   uint8_t clock_pct[XandNorDefs::kNumChannels];  // 1-100%
   bool level[XandNorDefs::kNumChannels];         // follow the source level, not edges
   uint8_t threshold_dv[XandNorDefs::kNumChannels]; // level threshold, 0.1 V units
+  // Another channel as the trigger source, instead of source[]: 0 = none,
+  // else 1 + 2 * channel + end (end: its gate's falling edge). Shown C1> / C1<.
+  uint8_t chan_src[XandNorDefs::kNumChannels];
+  // Channel edges from the previous tick, for channel sources
+  bool chan_was[XandNorDefs::kNumChannels], chan_rose[XandNorDefs::kNumChannels],
+       chan_fell[XandNorDefs::kNumChannels];
   CVInputMap fn_cv[8];
   // Preset by CV. Global: stored with every patch, but loading a slot leaves it
   // alone, so a CV-driven load can't change what drives the next one.
@@ -545,7 +559,19 @@ private:
     }
     source[ch].div_mult.steps = div;
 
-    bool trig = source[ch].Clock(); // always called, to track edges
+    bool trig;
+    if (chan_src[ch]) {
+      // Another channel's start or end, through this channel's divider.
+      const int k = (chan_src[ch] - 1) / 2;
+      const bool end = (chan_src[ch] - 1) % 2;
+      bool edge = end ? chan_fell[k] : chan_rose[k];
+      // On its own end, an idle channel starts itself: a free-running
+      // oscillator with period about its length (plus any delay).
+      if (end && k == ch && !s.active && !s.drop && !delay_count[ch]) edge = true;
+      trig = source[ch].div_mult.Tick(edge);
+    } else {
+      trig = source[ch].Clock(); // always called, to track edges
+    }
     const uint32_t now = OC::CORE::ticks;
 
     // Tempo: the time between triggers, measured before probability drops any.
@@ -582,7 +608,7 @@ private:
         else if (v < thr - kHysteresis) level_high[ch] = false;
         return chan_high[ch] = level_high[ch];
       }
-      return chan_high[ch] = source[ch].Gate();
+      return chan_high[ch] = SourceGate(ch);
     }
 
     // Delay: queue the trigger; it fires when due. The delay is read at the
@@ -781,14 +807,23 @@ private:
     if (scope_col >= kScopeCols) scope_col = -1; // wait for the next trigger
   }
 
+  // The source's gate level, for Thru and Level: another channel's gate
+  // (inverted for an end source), or the source map's.
+  bool SourceGate(int ch) const {
+    if (!chan_src[ch]) return source[ch].Gate();
+    const int k = (chan_src[ch] - 1) / 2;
+    return ((chan_src[ch] - 1) % 2) ? !chan_was[k] : chan_was[k];
+  }
+
   // The level of a channel's source, for level mode: the CV of an input or
   // output, or 5 V / 0 V for a trigger or MIDI source.
   int LevelIn(int ch) const {
+    if (chan_src[ch]) return SourceGate(ch) ? 5 * ONE_OCTAVE : 0;
     const int idx = source[ch].index();
     switch (source[ch].source_type()) {
       case DigitalInputMap::TYPE_ADC: return HS::frame.In(idx);
       case DigitalInputMap::TYPE_DAC: return HS::frame.ViewOut(idx);
-      default: return source[ch].Gate() ? 5 * ONE_OCTAVE : 0;
+      default: return SourceGate(ch) ? 5 * ONE_OCTAVE : 0;
     }
   }
 
@@ -864,6 +899,7 @@ FLASHMEM void XandNor::LoadDefaults() {
     clock_length[ch] = false;
     clock_pct[ch] = kDefaultClockPct;
     level[ch] = false;
+    chan_src[ch] = 0;
     threshold_dv[ch] = kDefaultThresholdDv;
   }
   for (int o = 0; o < 8; ++o) {
@@ -890,6 +926,7 @@ FLASHMEM void XandNor::Start() {
     period[ch] = 0;
     delay_count[ch] = 0;
     level_high[ch] = false;
+    chan_was[ch] = chan_rose[ch] = chan_fell[ch] = false;
     chan_high[ch] = false;
   }
   for (int o = 0; o < kNumOutputs; ++o) out_high[o] = false;
@@ -965,6 +1002,7 @@ FLASHMEM void XandNor::PackPatch(XandNorDefs::PackedPatch &p) const {
   p.preset_cv = preset_cv.Pack();
   p.preset_trig = preset_trig.Pack() & 0xff; // source only
   p.ext_reserved[0] = preset_audio ? 0 : 1;  // stored inverted: zero = default On
+  for (int ch = 0; ch < kNumChannels; ++ch) p.ext_reserved[1 + ch] = chan_src[ch];
   for (int o = 0; o < 8; ++o) p.routes[o] = routes[o];
 }
 
@@ -983,6 +1021,7 @@ FLASHMEM void XandNor::UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_
     source[ch].Unpack(p.source[ch]);
     length[ch] = constrain(p.length[ch], kLengthThru, kLengthInfinite);
     div_steps[ch] = source[ch].div_mult.steps; // Unpack never leaves 0
+    chan_src[ch] = p.ext_reserved[1 + ch] <= 2 * kNumChannels ? p.ext_reserved[1 + ch] : 0;
     const ChannelExtras &e = p.extras[ch];
     UnpackCV(length_cv[ch], e.length_cv);
     cv_mode[ch] = constrain(e.cv_mode, 0, CV_MODE_COUNT - 1);
@@ -1463,7 +1502,13 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
     gfxPrint(1, y, (r == 3 && level[ch]) ? "Thresh:" : kRowLabels[r]);
     switch (r) {
       case 0:
-        gfxPrint(52, y, source[ch].InputName());
+        if (chan_src[ch]) { // "C1>" a channel's start, "C1<" its end
+          gfxPrint(52, y, "C");
+          gfxPrint((chan_src[ch] - 1) / 2 + 1);
+          gfxPrint((chan_src[ch] - 1) % 2 ? "<" : ">");
+        } else {
+          gfxPrint(52, y, source[ch].InputName());
+        }
         PrintDiv(76, y, div_steps[ch]);
         if (div_cv[ch].enabled() && source[ch].div_mult.steps != div_steps[ch]) {
           DrawArrow(96, y);
@@ -1924,6 +1969,19 @@ FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
   if (row >= scroll + kVisibleRows) scroll = row - kVisibleRows + 1;
 }
 
+// The Source list: the platform's sources, then C1> C1< C2> C2< ... C4<.
+FLASHMEM void XandNor::ChangeChannelSource(int ch, int direction) {
+  using namespace XandNorDefs;
+  if (chan_src[ch]) {
+    const int v = chan_src[ch] + direction;
+    chan_src[ch] = v < 1 ? 0 : min(v, 2 * kNumChannels); // below C1> returns to the platform list
+    return;
+  }
+  const uint32_t before = source[ch].Pack();
+  source[ch].ChangeSource(direction);
+  if (direction > 0 && source[ch].Pack() == before) chan_src[ch] = 1; // past its end
+}
+
 FLASHMEM static void AdjustDepth(CVInputMap &m, int direction) {
   m.attenuversion = constrain(m.attenuversion + direction, -127, 127);
 }
@@ -2006,7 +2064,7 @@ FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
   const int ch = page - PAGE_CHANNEL_A;
   switch (cursor) {
     case FIELD_SOURCE:
-      source[ch].ChangeSource(direction);
+      ChangeChannelSource(ch, direction);
       break;
     case FIELD_DIV:
       div_steps[ch] = DivIndexToSteps(

@@ -36,7 +36,7 @@ Each channel turns triggers into gates. The page is a scrolling list:
 
 | Row | Setting |
 | --- | --- |
-| **Source** | The trigger input: T1–T4, a CV input, another output, or MIDI. Next to it, the **divider**: turning right goes x1, x2, x3 … (multiply), turning left /2, /3 … (divide) |
+| **Source** | The trigger input: T1–T4, a CV input, another output, or MIDI; or, after those in the list, another channel: **C1>** fires when CH1's gate starts, **C1<** when it ends. Next to it, the **divider**: turning right goes x1, x2, x3 … (multiply), turning left /2, /3 … (divide) |
 | **Length** | Gate length from 1 ms to 10 s, in ten steps per decade. Below 1 ms: **Thru** (the output follows the source while it is high) and **Level** (see below). Above 10 s: **Inf** (high until the next trigger). In Clock mode this row is a percentage instead |
 | **CV** | Length CV input and depth |
 | **Len by** | **Time** or **Clock**: in Clock mode Length is 1–100% of the measured time between triggers (after the divider), so gates keep their shape when the tempo changes. Until two triggers have been measured, the Time setting applies. In Level mode this row is **Thresh** |
@@ -52,6 +52,8 @@ Each channel turns triggers into gates. The page is a scrolling list:
 When a CV is patched, its row shows an arrow followed by the value currently in use.
 
 A trigger that arrives while the gate is still high briefly drops the gate (240 µs) before restarting it, so downstream modules see a new edge.
+
+**Channel sources.** Chaining on a channel's end (CH2 on **C1<**, CH3 on **C2<** …) makes sequential pulses from one trigger, with no patching; each link adds about 0.06 ms. A channel set to its own end (CH1 on **C1<**) starts itself and retriggers as each gate ends: a free-running pulse source whose period is its length plus any delay. The divider, delay, probability and ratchets apply to channel sources too. In Thru or Level, the output follows the source channel's gate (inverted for **<**).
 
 **Level mode.** The channel is high while its source is above the threshold (0.1–6.3 V, default 1.2 V), with 0.2 V of hysteresis so it switches cleanly. With a CV input as the source, an LFO becomes a gate whose width follows the threshold. Delay, probability and ratchets don't apply in Level or Thru.
 

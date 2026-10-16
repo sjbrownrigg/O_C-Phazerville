@@ -3,11 +3,13 @@ layout: default
 ---
 # (X)AND(N)OR
 
+> **Hardware: Teensy 4.1 [O.R.N.8](https://www.tlm-audio.com/product-page/oc-4-1-phazerville) required.** To get the best out of it, (X)AND(N)OR is built around the O.R.N.8's more generous I/O: eight outputs (A–H) for its gates, logic and CV functions, and eight CV inputs (1–8), so every channel setting can have its own modulation. It also uses the O.R.N.8's X and Y buttons, its audio applets and its microSD slot for preset banks. It is included only in Teensy 4.1 (T41) builds; 4-output Teensy 4.0 and 3.2 modules have neither the I/O nor the save space for it.
+
 *(X)AND(N)OR* turns triggers into gates and combines them. Four gate channels (CH1–CH4) each take a trigger from any input and produce a gate from 1 ms to 10 s long, shaped by a divider, delay, probability and ratchets. Eight outputs (A–H) each carry a channel's gate, a logic combination of two channels, a toggle or latch, a stepped CV built from all four channels, or an envelope. Almost every setting can be modulated by CV.
 
 The app also hosts the ORN8's audio applets, has a built-in logic-analyser scope that doubles as its screensaver, and stores 100 banks of 8 presets on the SD card.
 
-It is built for Teensy 4.1 (ORN8) hardware only: outputs **A–H**, CV inputs **1–8**, trigger inputs **T1–T4**. On the ORN8 panel the Up and Down buttons are labelled **A** and **B**.
+Panel labels used here: outputs **A–H**, CV inputs **1–8**, trigger inputs **T1–T4**. The Up and Down buttons are labelled **A** and **B** on the O.R.N.8.
 
 ## Controls
 

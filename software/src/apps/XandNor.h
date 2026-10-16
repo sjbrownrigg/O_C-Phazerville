@@ -770,6 +770,16 @@ private:
       scope_cv_acc[0][i] = 127;
       scope_cv_acc[1][i] = -128;
     }
+#ifdef XANDNOR_TRIG_PROGRESSIVE
+    // Trial: draw each triggered sweep as it's captured, not all at the end.
+    if (!scope_hold) {
+      scope_disp[scope_col] = scope_acc;
+      for (int i = 0; i < kScopeCVInputs; ++i) {
+        scope_cv_disp[0][i][scope_col] = scope_cv_cap[0][i][scope_col];
+        scope_cv_disp[1][i][scope_col] = scope_cv_cap[1][i][scope_col];
+      }
+    }
+#endif
     scope_cap[scope_col++] = scope_acc;
     scope_acc = 0;
     scope_tick = 0;
@@ -823,6 +833,7 @@ private:
   void DrawOutputs() const;
   void DrawScope(bool interactive = true) const;
   void ScopeFollowCursor();
+  void ScopeClear();
   void DrawScrollBar(int scroll_pos, int rows) const;
   void SaveSlot(int slot);
   void LoadSlot(int slot);
@@ -1653,6 +1664,16 @@ FLASHMEM void XandNor::DrawScope(bool interactive) const {
   else if (scope_cursor == SCOPE_CAPTURE) DrawFieldCursor(87, 7, 13);
 }
 
+// Empties the display and restarts capture.
+FLASHMEM void XandNor::ScopeClear() {
+  using namespace XandNorDefs;
+  scope_col = -1;
+  scope_head = 0;
+  memset(scope_disp, 0, sizeof(scope_disp));
+  memset(scope_cv_disp[0], 127, sizeof(scope_cv_disp[0])); // low > high = empty
+  memset(scope_cv_disp[1], -128, sizeof(scope_cv_disp[1]));
+}
+
 // Keeps the selected trace on screen when zoomed in, scrolling the window.
 FLASHMEM void XandNor::ScopeFollowCursor() {
   using namespace XandNorDefs;
@@ -1921,16 +1942,21 @@ FLASHMEM static void AdjustDepth(CVInputMap &m, int direction) {
 FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
   using namespace XandNorDefs;
   if (page == PAGE_SCOPE && !preset_mode) {
+    // Changing how the scope captures clears it, so the new setting draws
+    // from a clean screen instead of mixing with stale columns.
     if (scope_cursor == SCOPE_MODE) {
       scope_mode = constrain(scope_mode + direction, 0, SCOPE_MODES - 1);
-      scope_col = -1;
+      ScopeClear();
     } else if (scope_cursor == SCOPE_TRIG) {
       scope_trig.ChangeSource(direction);
       scope_period = 0;
+      ScopeClear();
     } else if (scope_cursor == SCOPE_SPAN) {
       scope_span = constrain(scope_span + direction, 0, kScopeSpans - 1);
+      ScopeClear();
     } else if (scope_cursor == SCOPE_CAPTURE) {
       scope_peak = direction < 0; // Peak first, Sample to the right
+      ScopeClear();
     } else {
       uint8_t &t = scope_traces[scope_cursor - SCOPE_TRACE0];
       t = constrain(t + direction, 0, kScopeSignals - 1);

@@ -9,7 +9,7 @@ layout: default
 
 The app also hosts the O.R.N.8's audio applets, has a built-in logic-analyser scope that doubles as its screensaver, and stores 100 banks of 8 presets on the SD card.
 
-Panel labels used here: outputs **A–H**, CV inputs **1–8** (shown on screen as CV 1–CV 8), trigger inputs **T1–T4**. The Up and Down buttons are labelled **A** and **B** on the O.R.N.8.
+Panel labels used here: outputs **A–H**, CV inputs **1–8** (shown on screen as CV 1–CV 8), trigger inputs **TR 1–TR 4**. The Up and Down buttons are labelled **A** and **B** on the O.R.N.8.
 
 ## Controls
 
@@ -36,7 +36,7 @@ Each channel turns triggers into gates. The page is a scrolling list:
 
 | Row | Setting |
 | --- | --- |
-| **Source** | The trigger: T1–T4, a CV input (**CV 1**–**CV 8**), another channel, another output, or MIDI. The channels come straight after CV 8 in the list: **CH1>** fires when CH1's gate starts, **CH1<** when it ends, then CH2>, CH2< … CH4<. Next to it, the **divider**: turning right goes x1, x2, x3 … (multiply), turning left /2, /3 … (divide) |
+| **Source** | The trigger: TR 1–TR 4, a CV input (**CV 1**–**CV 8**), another channel, another output, or MIDI. The channels come straight after CV 8 in the list: **CH1>** fires when CH1's gate starts, **CH1<** when it ends, then CH2>, CH2< … CH4<. Next to it, the **divider**: turning right goes x1, x2, x3 … (multiply), turning left /2, /3 … (divide) |
 | **Length** | Gate length from 1 ms to 10 s, in ten steps per decade. Below 1 ms: **Thru** (the output follows the source while it is high) and **Level** (see below). Above 10 s: **Inf** (high until the next trigger). In Clock mode this row is a percentage instead |
 | **CV** | Length CV input and depth |
 | **Len by** | **Time** or **Clock**: in Clock mode Length is 1–100% of the measured time between triggers (after the divider), so gates keep their shape when the tempo changes. Until two triggers have been measured, the Time setting applies. In Level mode this row is **Thresh** |
@@ -87,7 +87,7 @@ Each output takes a function and one or two channels. Turn the left encoder thro
 
 ### Default patch
 
-A fresh install and empty preset slots start here. All four channels take T1, with lengths 10, 50, 100 and 250 ms, so one clock fans out into nested gates and the slices between them:
+A fresh install and empty preset slots start here. All four channels take TR 1, with lengths 10, 50, 100 and 250 ms, so one clock fans out into nested gates and the slices between them:
 
 | Output | Function | Result on each clock |
 | --- | --- | --- |
@@ -128,7 +128,7 @@ A logic analyser of the app's own signals, with no patching. The status line sho
 | Setting | Options |
 | --- | --- |
 | Mode | **Swp** (default): the picture stays still and is redrawn in place as new data arrives. **Roll**: scrolls, newest on the right. **Trig**: each sweep starts at the trigger and is drawn as it is captured |
-| Trigger | Any input or output (default T1), or none for free-running |
+| Trigger | Any input or output (default TR 1), or none for free-running |
 | Timebase | **Auto**, or 5 ms to 10 s per screen. Auto fits two trigger periods in Swp and Trig, and is a fixed 2 s in Roll so the scroll speed never depends on the clock |
 | Capture | **Pk** (default): each column records everything that happened during it, so no pulse is missed. **Sm**: each column takes a single sample, as the Scope applet does |
 | Traces | Each of the eight shows **C1–C4** (channels), **A–H** (outputs) or **V1–V8** (CV inputs, drawn from −5 V to +5 V), or "--". Default: C1–C4 and E–H. In Pk mode a CV trace shows each column's full range, so fast modulation appears as a band |
@@ -176,14 +176,14 @@ That gives 0 to 15 steps. Set the step size on the Outputs page: **Semi** (a sem
 
 #### A 16-step staircase from one clock
 
-Clock T1 and set the four channels to divide it by powers of two, each with a gate half its period long:
+Clock TR 1 and set the four channels to divide it by powers of two, each with a gate half its period long:
 
 | Channel | Source | Divider | Len by | Length |
 | --- | --- | --- | --- | --- |
-| CH1 | T1 | /2 | Clock | 50% |
-| CH2 | T1 | /4 | Clock | 50% |
-| CH3 | T1 | /8 | Clock | 50% |
-| CH4 | T1 | /16 | Clock | 50% |
+| CH1 | TR 1 | /2 | Clock | 50% |
+| CH2 | TR 1 | /4 | Clock | 50% |
+| CH3 | TR 1 | /8 | Clock | 50% |
+| CH4 | TR 1 | /16 | Clock | 50% |
 
 Set an output to **BIN** with step **1/3V**. The channels now count like the digits of a binary counter, so the output steps down 15, 14, 13 … 0, one step per clock, and repeats every 16 clocks: a descending staircase from 5 V to 0 V. On the Scope page, C1–C4 show the counter pattern, each half the speed of the one before.
 
@@ -195,10 +195,10 @@ Odd dividers make the channels drift in and out of phase with each other:
 
 | Channel | Source | Divider | Length |
 | --- | --- | --- | --- |
-| CH1 | T1 | x1 | 100 ms |
-| CH2 | T1 | /3 | 300 ms |
-| CH3 | T1 | /4 | 400 ms |
-| CH4 | T1 | /5 | 600 ms |
+| CH1 | TR 1 | x1 | 100 ms |
+| CH2 | TR 1 | /3 | 300 ms |
+| CH3 | TR 1 | /4 | 400 ms |
+| CH4 | TR 1 | /5 | 600 ms |
 
 Set an output to **BIN** with **Semi** steps, and patch it through a quantiser set to a scale into a VCO's 1 V/oct input. Use output E (XOR of CH1 and CH2) as the trigger for your envelope, or set another output to **ENV** in AD mode on CH1 for a percussive VCA envelope.
 
@@ -206,7 +206,7 @@ Each clock produces a note from the current combination of high channels, and th
 
 ### Ratchet rolls on demand
 
-Set CH2 to T1 with a length of about 80% of the clock period (or **Len by: Clock** at 80%), **Ratchet** 1, and patch a slow LFO or a stepped random voltage into CV 2 with CH2's Ratchet **CV** set to input 2. As the voltage rises, each gate splits into 2, 3 … up to 8 pulses: drum rolls that come and go. With **CV mode: Track**, the roll changes speed within a single gate.
+Set CH2 to TR 1 with a length of about 80% of the clock period (or **Len by: Clock** at 80%), **Ratchet** 1, and patch a slow LFO or a stepped random voltage into CV 2 with CH2's Ratchet **CV** set to input 2. As the voltage rises, each gate splits into 2, 3 … up to 8 pulses: drum rolls that come and go. With **CV mode: Track**, the roll changes speed within a single gate.
 
 ### Off-beats and swing from one clock
 

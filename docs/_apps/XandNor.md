@@ -108,12 +108,54 @@ Settings for the functions that need them, one row per output; rows with none sh
 
 ## CV Mod
 
-- **A–H:** a function CV input and depth per output. CV moves the function on from the one set on the Routing page through the eight logic functions (+5 V at 100% spans all eight); the function in use is shown after the arrow. TOGL, LTCH, CNT, BIN and ENV aren't modulated.
+Voltage control of each output's logic function, and of preset loading. The page scrolls: rows **A–H** first, then **Preset**, **Load on** and **Audio**.
+
+### Function by CV (outputs A–H)
+
+Each output row reads, left to right: the output letter, its function **CV source**, the **depth**, and after the arrow the **function in use** right now.
+
+```
+A  CV 3  100%  > NAND
+```
+
+The CV moves the function on from the one set on the Routing page, through the eight logic functions in this order:
+
+**OUT → NOT → AND → NAND → OR → NOR → XOR → XNOR**
+
+- At 100% depth each step takes 0.625 V, so +5 V covers all eight. Negative voltage, or negative depth, moves back towards OUT. The result stops at either end rather than wrapping.
+- The function changes on the next tick (60 µs), so audio-rate modulation is possible.
+- The output keeps the channels set on the Routing page. A one-channel function (OUT, NOT) reads the first; a two-channel function reads both, so set both channels on Routing if the CV can reach the two-input functions.
+- Outputs set to **TOGL**, **LTCH**, **CNT**, **BIN** or **ENV** aren't affected: they keep state, so switching them by CV wouldn't behave predictably.
+- Several outputs can share one CV source, each with its own depth.
+
+### CV sources
+
+Every CV row in the app (here and on the channel pages) offers the same sources:
+
+| Source | What it is |
+| --- | --- |
+| **CV 1**–**CV 8** | The CV input jacks |
+| **OutA**–**OutH** | (X)AND(N)OR's own outputs, read back one tick later, so one output can modulate another with no patch cable. Gate functions give 0 or 5 V, **ENV** 0–5 V, **CNT** / **BIN** their stepped voltage |
+| **VrtI**–**VrtP** | The platform's virtual outputs, shared with Quadrants. Quadrants' clock writes some of them but doesn't run here; some audio applets write CV to them (TuneTracker's detected pitch, for example) |
+| **M 1**… | The platform's MIDI CV mappings, set up in its MIDI settings |
+| **G*** | Noise: a new random value on every tick |
+| **–** | Off |
+
+**Depth for gate sources.** A gate output is 0 or 5 V, so at 100% it jumps all the way to XNOR. To step one function per gate, set the depth to about **13%**; two functions need about **25%**. The depth readout shows the percentage actually applied.
+
+### Examples
+
+- **Flip a logic output with a gate:** set E to **AND 1 2** on Routing, then give E the source **OutH** at about 13%. While H is high, E becomes **NAND**, its exact inverse.
+- **A function sequencer:** give output F a slow stepped random voltage, or a **BIN** output at **1/3V** steps from this app, at 100% depth. F then walks through the logic functions as the voltage changes, while the Overview and Scope show the result.
+- **Feedback:** an output modulating its own function (A with source **OutA**) can lock up or oscillate depending on its channels. It's unpredictable, which can be the point.
+
+### Preset by CV and audio
+
 - **Preset:** a CV input and depth that pick slot 1–8 of the current bank (0–5 V, about 0.6 V per slot).
 - **Load on:** the trigger that loads the slot the Preset CV points to. With no Preset CV set, each trigger steps to the next saved slot ("next").
 - **Audio:** whether loading a preset also loads its audio setup (default On).
 
-These preset settings are global: loading a slot doesn't change them.
+These settings are global: loading a slot doesn't change them.
 
 ## Audio
 

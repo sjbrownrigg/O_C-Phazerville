@@ -11,6 +11,12 @@ The app also hosts the O.R.N.8's audio applets, has a built-in logic-analyser sc
 
 Panel labels used here: outputs **A–H**, CV inputs **1–8** (shown on screen as CV 1–CV 8), trigger inputs **TR 1–TR 4**. The Up and Down buttons are labelled **A** and **B** on the O.R.N.8.
 
+## Contents
+{: .no_toc }
+
+- TOC
+{:toc}
+
 ## Controls
 
 | Control | Action |

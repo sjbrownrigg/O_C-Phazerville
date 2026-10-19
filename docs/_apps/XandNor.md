@@ -31,7 +31,7 @@ Panel labels used here: outputs **A–H**, CV inputs **1–8** (shown on screen 
 
 The field cursor is a steady underline. On the Audio page the audio engine takes all short presses; see [Audio](#audio).
 
-Pages, in order: **Overview**, **CH1–CH4**, **Routing**, **Outputs**, **CV Mod**, **Audio**, **Scope**. The list wraps, so **A** from Overview goes straight to Scope.
+Pages, in order: **Overview**, **CH1–CH4**, **Routing**, **Outputs**, **CV Mod**, **Mods**, **Audio**, **Scope**. The list wraps, so **A** from Overview goes straight to Scope.
 
 ## Overview
 
@@ -44,6 +44,7 @@ Each channel turns triggers into gates. The page is a scrolling list:
 | Row | Setting |
 | --- | --- |
 | **Source** | The trigger: TR 1–TR 4, a CV input (**CV 1**–**CV 8**), another channel, an output (**OutA**–**OutH**), a virtual output (**VrtI**–**VrtP**), or MIDI. The channels come straight after CV 8 in the list: **CH1>** fires when CH1's gate starts, **CH1<** when it ends, then CH2>, CH2< … CH4<. Next to it, the **divider**: turning right goes x1, x2, x3 … (multiply), turning left /2, /3 … (divide) |
+| **Reset** | A trigger that restarts the channel's counting: the next trigger is the first of its division (so /4 lines up with the bar) and the first step of any Euclidean pattern, and triggers waiting in the delay queue are dropped. A gate already running finishes. The same sources as **Source**, including CH1>…CH4<; default off |
 | **Length** | Gate length from 1 ms to 10 s, in ten steps per decade. Below 1 ms: **Thru** (the output follows the source while it is high) and **Level** (see below). Above 10 s: **Inf** (high until the next trigger). In Clock mode this row is a percentage instead |
 | **CV** | Length CV input and depth |
 | **Len by** | **Time** or **Clock**: in Clock mode Length is 1–100% of the measured time between triggers (after the divider), so gates keep their shape when the tempo changes. Until two triggers have been measured, the Time setting applies. In Level mode this row is **Thresh** |
@@ -64,7 +65,7 @@ A trigger that arrives while the gate is still high briefly drops the gate (240 
 
 **Level mode.** The channel is high while its source is above the threshold (0.1–6.3 V, default 1.2 V), with 0.2 V of hysteresis so it switches cleanly. With a CV input as the source, an LFO becomes a gate whose width follows the threshold. Delay, probability and ratchets don't apply in Level or Thru.
 
-**CV sources.** Every CV row offers the CV inputs (**CV 1**–**CV 8**) and also the outputs: **OutA**–**OutH** are (X)AND(N)OR's own outputs, read back one tick later, so one output can modulate a channel with no patch cable (for example an **ENV** on H as CH1's Length CV, or a **CNT** output as another channel's Prob CV). **VrtI**–**VrtP** are the platform's virtual outputs, shared with Quadrants: Quadrants' clock writes some of them, which doesn't run here, and some audio applets write CV to them (TuneTracker's detected pitch, for example), which does.
+**CV sources.** Every CV row offers the CV inputs (**CV 1**–**CV 8**), the app's own modulators (**Mod1**–**Mod4**, see [Mods](#mods)) and also the outputs: **OutA**–**OutH** are (X)AND(N)OR's own outputs, read back one tick later, so one output can modulate a channel with no patch cable (for example an **ENV** on H as CH1's Length CV, or a **CNT** output as another channel's Prob CV). **VrtI**–**VrtP** are the platform's virtual outputs, shared with Quadrants: Quadrants' clock writes some of them, which doesn't run here, and some audio applets write CV to them (TuneTracker's detected pitch, for example), which does.
 
 ### CV scaling
 
@@ -142,6 +143,7 @@ Every CV row in the app (here and on the channel pages) offers the same sources:
 | Source | What it is |
 | --- | --- |
 | **CV 1**–**CV 8** | The CV input jacks |
+| **Mod1**–**Mod4** | The app's own modulators: LFOs, random voltages, slews and envelopes, set up on the [Mods](#mods) page |
 | **OutA**–**OutH** | (X)AND(N)OR's own outputs, read back one tick later, so one output can modulate another with no patch cable. Gate functions give 0 or 5 V, **ENV** 0–5 V, **CNT** / **BIN** their stepped voltage |
 | **VrtI**–**VrtP** | The platform's virtual outputs, shared with Quadrants. Quadrants' clock writes some of them but doesn't run here; some audio applets write CV to them (TuneTracker's detected pitch, for example) |
 | **M 1**… | The platform's MIDI CV mappings, set up in its MIDI settings |
@@ -164,6 +166,34 @@ Every CV row in the app (here and on the channel pages) offers the same sources:
 
 These settings are global: loading a slot doesn't change them.
 
+## Mods
+
+Four internal modulators, **Mod1**–**Mod4**, that any CV row can use: pick them in a CV source list, straight after CV 8. They are part of the patch, so presets save and load them. Each has a type; each type shows its own settings:
+
+| Type | What it does | Settings |
+| --- | --- | --- |
+| **LFO** | A free-running oscillator | **Wave**: Sine, Tri, Saw (rising), Ramp (falling), Sqr. **Period**: 1 ms to 60 s. **Level** and **Bi**/**Uni**. **Sync**: a trigger that restarts the cycle |
+| **Rand** | A random voltage, held until the next change (sample and hold) | **Trig**: a new value on each trigger; with no trigger, a new value every **Period**. **Level** and **Bi**/**Uni**. **Glide**: Off, or the time a full-scale change takes, for smooth random |
+| **Slew** | Another signal, smoothed | **Input**: any CV source (a CV input, an output, another Mod) with its depth. **Rise** and **Fall**: Off, or the time to move 5 V |
+| **Env** | An attack/decay envelope | **Trig**: what starts it; a new trigger restarts the attack from the current level. **Attack**, **Decay**: Off (instant) or 1 ms to 10 s. **Level** |
+
+- **Level** is 0–100% of 5 V. **Bi** swings ±Level around 0 V; **Uni** goes from 0 V to +Level.
+- Each Mod's first row shows its type, with a meter of its output beside it: a bar to the right of the centre line for positive voltages, to the left for negative.
+- **Trig** and **Sync** offer the same sources as a channel's Source, including the channels (**CH1>** a channel's start, **CH1<** its end).
+- The defaults are one of each: **Mod1** a 1 s sine LFO, **Mod2** a random voltage every 500 ms, **Mod3** a slew (no input yet, 100 ms each way), **Mod4** an envelope on TR 1 (2 ms attack, 200 ms decay). Presets saved before the Mods existed load with these.
+- The CV row's own depth still applies, so one Mod can drive several targets by different amounts, or inverted.
+- To see a Mod, set a Scope trace to **M1**–**M4**.
+
+**Rst all.** The last row of the page is the global reset: a trigger that resets every channel (as each channel's own **Reset** does), restarts every LFO and every Rand's own clock, and clears TOGL and LTCH outputs. Like the preset trigger, it is global: loading a preset doesn't change it. Send it the same pulse as your sequencer's reset to bring dividers, Euclidean patterns and LFOs back in line together.
+
+### Examples
+
+- **Swing that breathes:** give CH2's Delay CV **Mod1** (a slow LFO, set to **Uni**) at a low depth, so CH2 drifts late and back.
+- **Random gate lengths:** set CH1's Length CV to **Mod2**, with Mod2's **Trig** on the same input as CH1's Source (TR 1): the Mods update before the channels, so each gate starts with a fresh random length.
+- **Fading density:** set CH1's Prob to 0% and its Prob CV to **Mod4** (Env) triggered by **CH3>**, with a long decay: right after each CH3 gate CH1 fires every time, then thins out as the envelope falls.
+- **Slewed function sweep:** a **Slew** with Input **OutG** (a BIN output) smooths the staircase into a ramp, which can then drive another channel's Length.
+- **Bar-locked LFO:** an **LFO** with Sync on the clock divided by a channel (**CH4>** with CH4 at /16) restarts on every bar.
+
 ## Audio
 
 The O.R.N.8's audio applets, exactly as in Quadrants' audio setup. While (X)AND(N)OR is running, the audio applets follow CV and triggers here too, whichever page you are on.
@@ -182,7 +212,7 @@ A logic analyser of the app's own signals, with no patching. The status line sho
 | Trigger | Any input or output (default TR 1), or none for free-running |
 | Timebase | **Auto**, or 5 ms to 10 s per screen. Auto fits two trigger periods in Swp and Trig, and is a fixed 2 s in Roll so the scroll speed never depends on the clock |
 | Capture | **Pk** (default): each column records everything that happened during it, so no pulse is missed. **Sm**: each column takes a single sample, as the Scope applet does |
-| Traces | Each of the eight shows **C1–C4** (channels), **A–H** (outputs) or **V1–V8** (CV inputs, drawn from −5 V to +5 V), or "--". Default: C1–C4 and E–H. In Pk mode a CV trace shows each column's full range, so fast modulation appears as a band |
+| Traces | Each of the eight shows **C1–C4** (channels), **A–H** (outputs), **V1–V8** (CV inputs) or **M1–M4** (the mod sources), or "--". CV and mod traces are drawn from −5 V to +5 V. Default: C1–C4 and E–H. In Pk mode a CV trace shows each column's full range, so fast modulation appears as a band |
 
 - **Left encoder press:** zoom, 8 → 4 → 2 → 1 traces, each taller as fewer share the screen. Moving the cursor through the traces scrolls the view.
 - **Right encoder press:** hold (freeze) the display.
@@ -207,6 +237,7 @@ Long-press **A** or press **Y** to open the preset overlay: 100 banks of 8 slots
 Slots holding a patch carry a dot; the active slot is framed twice. The footer badge shows where banks are stored, **[SD]** or **[Int]**, and saving or changing bank confirms it, e.g. "Saved [SD]" or "3 saved [SD]".
 
 - **Storage.** Each bank is a file, `XNBANK00.DAT` to `XNBANK99.DAT`, with a companion `XNAUDnn.DAT` holding the slots' audio setups. Files go to the microSD card when one is ready, otherwise to the Teensy's internal flash. Every save is read back and checked; if the card fails, the save falls back to internal flash. Bank files left in internal flash move to the card automatically when one is present. A FAT32 (or exFAT) card is recommended: internal flash is smaller and can stutter while saving.
+- **Older presets.** Banks and the working patch from earlier versions load as before; their Mods take the defaults and their Resets are off. A bank is rewritten in the new format the next time one of its slots is saved.
 - **Audio in presets.** Saving a slot also stores the audio applet setup; loading applies it unless **Audio** is Off on the CV Mod page. Slots saved before this existed have no audio setup and leave audio alone.
 - **The working patch.** Your current settings and bank number are kept with the platform's normal app save: long-press the right encoder on (X)AND(N)OR in the app menu. Preset slots are saved to their files at once when you press A.
 

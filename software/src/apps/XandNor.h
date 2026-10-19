@@ -231,6 +231,9 @@ enum ModType : uint8_t { MOD_LFO, MOD_RANDOM, MOD_SLEW, MOD_ENV, MOD_TYPE_COUNT 
 static const char * const kModTypeNames[MOD_TYPE_COUNT] = {"LFO", "Rand", "Slew", "Env"};
 enum ModWave : uint8_t { WAVE_SINE, WAVE_TRI, WAVE_SAW, WAVE_RAMP, WAVE_SQUARE, WAVE_COUNT };
 static const char * const kWaveNames[WAVE_COUNT] = {"Sine", "Tri", "Saw", "Ramp", "Sqr"};
+// Bi: +-level around 0 V. Uni+: 0 V to +level. Uni-: 0 V to -level.
+enum ModPolarity : uint8_t { POL_BI, POL_UNI, POL_NEG, POL_COUNT };
+static const char * const kPolarityNames[POL_COUNT] = {"Bi", "Uni+", "Uni-"};
 // A CV map pointing at a mod source uses the platform's reserved source type,
 // which its Unpack() leaves alone, so presets store it like any other source.
 static constexpr uint8_t kModCVType = CVInputMap::TYPE_RESERVED0;
@@ -256,7 +259,7 @@ static constexpr ModParam kModLayout[MOD_TYPE_COUNT][kModSrcRowsPer][2] = {
   {{MP_TYPE, MP_NONE}, {MP_TRIG, MP_NONE}, {MP_RISE, MP_NONE}, {MP_FALL, MP_NONE}, {MP_LEVEL, MP_NONE}},
 };
 static constexpr uint8_t ParamWidth(ModParam p) {
-  return p == MP_POLARITY ? 18 : p == MP_DEPTH ? 30
+  return p == MP_DEPTH ? 30
        : (p == MP_PERIOD || p == MP_RISE || p == MP_FALL || p == MP_GLIDE) ? 31 : 24;
 }
 // Defaults: one of each type, so any Mod picked from a CV list does something.
@@ -267,7 +270,7 @@ static constexpr uint8_t kDefaultSlew = 21;       // 100 ms for 5 V
 // One mod source: settings, then state owned by Controller().
 struct ModSource {
   uint8_t type, wave, period, level; // level: 0-100% of 5 V
-  bool bipolar;
+  uint8_t polarity;                  // ModPolarity
   uint8_t rise, fall, glide;         // length-scale steps; 0 = off (instant)
   DigitalInputMap trig;              // LFO sync, Random clock, Env trigger
   uint8_t trig_chan;                 // a channel's start or end instead, as chan_src
@@ -328,7 +331,8 @@ struct PackedPatch {
   // Storage v4 (M11): the mod sources and the reset triggers.
   struct ModPacked {
     uint8_t type, wave, period, level;
-    uint8_t bipolar, trig, trig_chan, rise; // trig: DigitalInputMap source byte
+    uint8_t polarity, trig, trig_chan, rise; // polarity: 1 Bi, 0 Uni+, 2 Uni- (1 = the
+                                             // old "bipolar" flag); trig: source byte
     uint8_t fall, glide;
     uint16_t input;                         // CVInputMap::Pack()
     uint8_t reserved[4];
@@ -814,9 +818,12 @@ private:
     }
   }
 
-  // A full-scale (-32768..32767) value to CV: +-amp, or 0..amp when unipolar.
-  static int ModScale(int32_t v, int32_t amp, bool bipolar) {
-    return bipolar ? v * amp / 32768 : (v + 32768) * amp / 65536;
+  // A full-scale (-32768..32767) value to CV: +-amp, 0..amp or 0..-amp.
+  static int ModScale(int32_t v, int32_t amp, uint8_t polarity) {
+    using namespace XandNorDefs;
+    if (polarity == POL_BI) return v * amp / 32768;
+    const int u = (v + 32768) * amp / 65536;
+    return polarity == POL_NEG ? -u : u;
   }
 
   // Ticks for a length-scale step (1 ms - 10 s); at least 1.
@@ -833,7 +840,7 @@ private:
     switch (m.type) {
       case MOD_LFO: { // the trigger restarts the cycle
         if (trig) m.phase = 0;
-        mod_out[i] = ModScale(LfoWave(m.wave, m.phase), amp, m.bipolar);
+        mod_out[i] = ModScale(LfoWave(m.wave, m.phase), amp, m.polarity);
         m.phase += 0xffffffffu / max(UsToTicks(PeriodUs(m.period)), 1u);
         break;
       }
@@ -852,7 +859,7 @@ private:
           if (m.value < m.target) m.value = min(m.value + step, m.target);
           else m.value = max(m.value - step, m.target);
         }
-        mod_out[i] = ModScale(m.value >> 8, amp, m.bipolar);
+        mod_out[i] = ModScale(m.value >> 8, amp, m.polarity);
         break;
       }
       case MOD_SLEW: { // rise and fall times are for 5 V
@@ -1144,7 +1151,7 @@ FLASHMEM void XandNor::LoadDefaultMods() {
     m.wave = WAVE_SINE;
     m.period = (i == MOD_RANDOM) ? kDefaultRandPeriod : kDefaultModPeriod;
     m.level = 100;
-    m.bipolar = true;
+    m.polarity = POL_BI;
     m.rise = (i == MOD_ENV) ? kDefaultAttack : kDefaultSlew;
     m.fall = (i == MOD_ENV) ? kDefaultDecay : kDefaultSlew;
     m.glide = 0;
@@ -1263,7 +1270,7 @@ FLASHMEM void XandNor::PackPatch(XandNorDefs::PackedPatch &p) const {
     x.wave = m.wave;
     x.period = m.period;
     x.level = m.level;
-    x.bipolar = m.bipolar;
+    x.polarity = m.polarity == POL_BI ? 1 : m.polarity == POL_UNI ? 0 : 2;
     x.trig = m.trig.Pack() & 0xff; // source only
     x.trig_chan = m.trig_chan;
     x.rise = m.rise;
@@ -1340,7 +1347,7 @@ FLASHMEM void XandNor::UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_
       m.wave = constrain(x.wave, 0, WAVE_COUNT - 1);
       m.period = constrain(x.period, 1, kNumPeriods);
       m.level = constrain(x.level, 0, 100);
-      m.bipolar = x.bipolar;
+      m.polarity = x.polarity == 0 ? POL_UNI : x.polarity == 2 ? POL_NEG : POL_BI;
       UnpackTrig(m.trig, m.trig_chan, x.trig, x.trig_chan);
       m.rise = constrain(x.rise, 0, kNumLengths);
       m.fall = constrain(x.fall, 0, kNumLengths);
@@ -2152,6 +2159,8 @@ FLASHMEM void XandNor::DrawModSources() const {
   };
   for (int r = msrc_scroll; r < msrc_scroll + kVisibleRows && r < kModSrcRows; ++r) {
     const int y = 13 + (r - msrc_scroll) * 9;
+    // A dotted rule above each Mod and the global reset, except at the top.
+    if (r % kModSrcRowsPer == 0 && r > msrc_scroll) gfxDottedLine(0, y - 1, 122, y - 1);
     if (r == kModSrcRows - 1) { // the global reset
       gfxPrint(1, y, "Rst all:");
       PrintTrigName(52, y, global_reset, global_chan);
@@ -2187,7 +2196,7 @@ FLASHMEM void XandNor::DrawModSources() const {
       gfxPos(x, y);
       switch (p) {
         case MP_WAVE:     gfxPrint(kWaveNames[m.wave]); break;
-        case MP_POLARITY: gfxPrint(m.bipolar ? "Bi" : "Uni"); break;
+        case MP_POLARITY: gfxPrint(kPolarityNames[m.polarity]); break;
         case MP_TRIG:     PrintTrigName(x, y, m.trig, m.trig_chan); break;
         case MP_INPUT:    PrintCVName(x, y, m.input); break;
         case MP_DEPTH:    PrintDepth(x, y, m.input); break;
@@ -2613,7 +2622,7 @@ FLASHMEM void XandNor::ChangeModParam(int direction) {
       m.value = m.target = 0;
       break;
     case MP_WAVE:     m.wave = constrain(m.wave + direction, 0, WAVE_COUNT - 1); break;
-    case MP_POLARITY: m.bipolar = direction < 0; break; // Bi first, Uni to the right
+    case MP_POLARITY: m.polarity = constrain(m.polarity + direction, 0, POL_COUNT - 1); break;
     case MP_TRIG:     ChangeTrigSource(m.trig, m.trig_chan, direction); break;
     case MP_INPUT:    ChangeCVSource(m.input, direction); break;
     case MP_DEPTH:    AdjustDepth(m.input, direction); break;

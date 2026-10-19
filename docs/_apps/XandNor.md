@@ -6,7 +6,11 @@ layout: default
 
 > **Hardware: Teensy 4.1 [O.R.N.8](https://www.tlm-audio.com/product-page/oc-4-1-phazerville) required.** To get the best out of it, (X)AND(N)OR is built around the O.R.N.8's more generous I/O: eight outputs (A–H) for its gates, logic and CV functions, and eight CV inputs (1–8), so every channel setting can have its own modulation. It also uses the O.R.N.8's X and Y buttons, its audio applets and its microSD slot for preset banks. It is included only in Teensy 4.1 (T41) builds; 4-output Teensy 4.0 and 3.2 modules have neither the I/O nor the save space for it.
 
-*(X)AND(N)OR* turns triggers into gates and combines them. Four gate channels (CH1–CH4) each take a trigger from any input and produce a gate from 1 ms to 10 s long, shaped by a divider, delay, probability and ratchets. Eight outputs (A–H) each carry a channel's gate, a logic combination of two channels, a toggle or latch, a stepped CV built from all four channels, or an envelope. Almost every setting can be modulated by CV.
+*(X)AND(N)OR* is a rhythm generator built from gate logic: from a single clock, or up to four triggers, it makes up to eight related rhythms, plus stepped voltages and modulation that move with them.
+
+In Eurorack terms it is mainly a gate processor and logic module, but in use it works as a rhythm generator. Give it one clock, or a few triggers, and it returns a whole set of related rhythms: nested gate lengths, off-beats, divisions, the slices between them, and logic combinations of all of these. On top of that it makes stepped CV (CNT and BIN) and modulation (ENV and the Mods), all locked to the same rhythm. It isn't a function generator: its envelopes and LFOs are there to support the rhythms. In short, it turns a simple clock into a full set of interlocking rhythms and matching CV, without a sequencer.
+
+It works by turning triggers into gates and combining them. Four gate channels (CH1–CH4) each take a trigger from any input and produce a gate from 1 ms to 10 s long, shaped by a divider, delay, probability and ratchets. Eight outputs (A–H) each carry a channel's gate, a logic combination of two channels, a toggle or latch, a stepped CV built from all four channels, or an envelope. Almost every setting can be modulated by CV.
 
 The app also hosts the O.R.N.8's audio applets, has a built-in logic-analyser scope that doubles as its screensaver, and stores 100 banks of 8 presets on the SD card.
 

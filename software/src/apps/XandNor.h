@@ -48,6 +48,7 @@ enum Page {
   PAGE_ROUTING,
   PAGE_OUTPUTS,
   PAGE_CVMOD,
+  PAGE_MODS,
   PAGE_AUDIO,
   PAGE_SCOPE,
   PAGE_COUNT
@@ -57,7 +58,7 @@ static constexpr int kNumChannels = 4;
 static constexpr int kNumOutputs = DAC_CHANNEL_COUNT;
 
 static const char * const kPageNames[PAGE_COUNT] = {
-  "Overview", "CH1", "CH2", "CH3", "CH4", "Routing", "Outputs", "CV Mod", "Audio", "Scope"
+  "Overview", "CH1", "CH2", "CH3", "CH4", "Routing", "Outputs", "CV Mod", "Mods", "Audio", "Scope"
 };
 
 // Output functions. OUT and NOT read one channel; the rest combine two.
@@ -111,6 +112,7 @@ static constexpr uint8_t kDropTicks = 4;
 // and its depth, or the trigger source and its divider).
 enum ChannelField {
   FIELD_SOURCE, FIELD_DIV,
+  FIELD_RESET,
   FIELD_LENGTH,
   FIELD_LEN_CV, FIELD_LEN_DEPTH,
   FIELD_LEN_MODE,
@@ -127,19 +129,20 @@ enum ChannelField {
 struct FieldPos { uint8_t row, x, w; };
 static constexpr FieldPos kFieldPos[FIELD_COUNT] = {
   {0, 52, 24}, {0, 80, 18},
-  {1, 52, 31},
-  {2, 52, 24}, {2, 88, 30},
-  {3, 52, 30},
-  {4, 52, 31},
-  {5, 52, 24}, {5, 88, 30},
-  {6, 52, 24},
-  {7, 52, 24}, {7, 88, 30},
-  {8, 52, 12},
-  {9, 52, 24}, {9, 88, 30},
+  {1, 52, 24},
+  {2, 52, 31},
+  {3, 52, 24}, {3, 88, 30},
+  {4, 52, 30},
+  {5, 52, 31},
+  {6, 52, 24}, {6, 88, 30},
+  {7, 52, 24},
+  {8, 52, 24}, {8, 88, 30},
+  {9, 52, 12},
   {10, 52, 24}, {10, 88, 30},
-  {11, 52, 37},
+  {11, 52, 24}, {11, 88, 30},
+  {12, 52, 37},
 };
-static constexpr int kChannelRows = 12;
+static constexpr int kChannelRows = 13;
 
 // CV Mod page: outputs A-H (function CV source and depth, with the function in
 // use), then the preset CV and its load trigger.
@@ -159,7 +162,7 @@ static constexpr FieldPos ModFieldPos(int f) {
 }
 static constexpr int kVisibleRows = 5;
 static const char * const kRowLabels[kChannelRows] = {
-  "Source:", "Length:", "  CV:", "Len by:", "Delay:", "  CV:",
+  "Source:", "Reset:", "Length:", "  CV:", "Len by:", "Delay:", "  CV:",
   "Prob:", "  CV:", "Ratchet:", "  CV:", "Div CV:", "CV mode:"
 };
 
@@ -220,6 +223,60 @@ static constexpr uint8_t kDefaultAttack = 4;  // 2 ms, a step on the length scal
 static constexpr uint8_t kDefaultDecay = 24;  // 200 ms
 static constexpr int32_t kEnvMax = 5 * ONE_OCTAVE * 256; // 5 V, 8 fractional bits
 
+// Mod sources (M11): four internal modulators, Mod1-Mod4, offered in every CV
+// source list after CV 8. Each is an LFO, a random (sample and hold) voltage,
+// a slew of another signal, or an AD envelope.
+static constexpr int kNumMods = 4;
+enum ModType : uint8_t { MOD_LFO, MOD_RANDOM, MOD_SLEW, MOD_ENV, MOD_TYPE_COUNT };
+static const char * const kModTypeNames[MOD_TYPE_COUNT] = {"LFO", "Rand", "Slew", "Env"};
+enum ModWave : uint8_t { WAVE_SINE, WAVE_TRI, WAVE_SAW, WAVE_RAMP, WAVE_SQUARE, WAVE_COUNT };
+static const char * const kWaveNames[WAVE_COUNT] = {"Sine", "Tri", "Saw", "Ramp", "Sqr"};
+// A CV map pointing at a mod source uses the platform's reserved source type,
+// which its Unpack() leaves alone, so presets store it like any other source.
+static constexpr uint8_t kModCVType = CVInputMap::TYPE_RESERVED0;
+// Periods (LFO, and Random's own clock): the length scale, then on to 60 s.
+static constexpr uint32_t kLongPeriodUs[] = {
+  12000000, 15000000, 20000000, 25000000, 30000000, 40000000, 50000000, 60000000};
+static constexpr int kNumPeriods = kNumLengths + sizeof(kLongPeriodUs) / sizeof(kLongPeriodUs[0]);
+static constexpr uint32_t PeriodUs(int step) {
+  return step <= kNumLengths ? kLengthUs[step - 1] : kLongPeriodUs[step - kNumLengths - 1];
+}
+// The Mods page: five rows per source (two fields each, by type), then the
+// global reset. Row 0 holds the type, with a meter of the output beside it.
+enum ModParam : uint8_t {
+  MP_NONE, MP_TYPE, MP_WAVE, MP_POLARITY, MP_TRIG, MP_INPUT, MP_DEPTH,
+  MP_PERIOD, MP_RISE, MP_FALL, MP_LEVEL, MP_GLIDE, MP_RESET
+};
+static constexpr int kModSrcRowsPer = 5;
+static constexpr int kModSrcRows = kNumMods * kModSrcRowsPer + 1;
+static constexpr ModParam kModLayout[MOD_TYPE_COUNT][kModSrcRowsPer][2] = {
+  {{MP_TYPE, MP_NONE}, {MP_WAVE, MP_NONE}, {MP_PERIOD, MP_NONE}, {MP_LEVEL, MP_POLARITY}, {MP_TRIG, MP_NONE}},
+  {{MP_TYPE, MP_NONE}, {MP_TRIG, MP_NONE}, {MP_PERIOD, MP_NONE}, {MP_LEVEL, MP_POLARITY}, {MP_GLIDE, MP_NONE}},
+  {{MP_TYPE, MP_NONE}, {MP_INPUT, MP_DEPTH}, {MP_RISE, MP_NONE}, {MP_FALL, MP_NONE}, {MP_NONE, MP_NONE}},
+  {{MP_TYPE, MP_NONE}, {MP_TRIG, MP_NONE}, {MP_RISE, MP_NONE}, {MP_FALL, MP_NONE}, {MP_LEVEL, MP_NONE}},
+};
+static constexpr uint8_t ParamWidth(ModParam p) {
+  return p == MP_POLARITY ? 18 : p == MP_DEPTH ? 30
+       : (p == MP_PERIOD || p == MP_RISE || p == MP_FALL || p == MP_GLIDE) ? 31 : 24;
+}
+// Defaults: one of each type, so any Mod picked from a CV list does something.
+static constexpr uint8_t kDefaultModPeriod = 31; // 1 s
+static constexpr uint8_t kDefaultRandPeriod = 28; // 500 ms
+static constexpr uint8_t kDefaultSlew = 21;       // 100 ms for 5 V
+
+// One mod source: settings, then state owned by Controller().
+struct ModSource {
+  uint8_t type, wave, period, level; // level: 0-100% of 5 V
+  bool bipolar;
+  uint8_t rise, fall, glide;         // length-scale steps; 0 = off (instant)
+  DigitalInputMap trig;              // LFO sync, Random clock, Env trigger
+  uint8_t trig_chan;                 // a channel's start or end instead, as chan_src
+  CVInputMap input;                  // Slew input
+  uint32_t phase;
+  int32_t value, target;             // Random: -32768..32767 << 8; Slew/Env: CV << 8
+  uint8_t env_phase;                 // 0 idle, 1 attack, 2 decay
+};
+
 // A patch as stored in EEPROM and in the preset slots.
 // Per-channel settings beyond source and length. The reserved bytes hold
 // M5/M6 settings later without changing the stored size, which would make
@@ -268,15 +325,31 @@ struct PackedPatch {
     uint8_t reserved[4];
   } out[8];
   uint8_t ext_reserved[64]; // M8
+  // Storage v4 (M11): the mod sources and the reset triggers.
+  struct ModPacked {
+    uint8_t type, wave, period, level;
+    uint8_t bipolar, trig, trig_chan, rise; // trig: DigitalInputMap source byte
+    uint8_t fall, glide;
+    uint16_t input;                         // CVInputMap::Pack()
+    uint8_t reserved[4];
+  } mod[kNumMods];
+  uint8_t mods_set;              // 0 = saved before M11: the default mods
+  uint8_t reset_trig[kNumChannels]; // DigitalInputMap source bytes
+  uint8_t reset_chan[kNumChannels]; // a channel's start or end instead, as chan_src
+  uint8_t global_reset, global_chan; // global, like the preset trigger
+  uint8_t v4_reserved[53];
 };
-static_assert(sizeof(PackedPatch) == 256, "PackedPatch layout changed");
+static_assert(sizeof(PackedPatch) == 384, "PackedPatch layout changed");
 static constexpr size_t kPatchV2Size = 128; // the patch before ext existed
+static constexpr size_t kPatchV3Size = 256; // the patch before M11
+static_assert(offsetof(PackedPatch, mod) == kPatchV3Size, "v4 fields must follow the v3 patch");
 
 static constexpr int kNumSlots = 8;
-// v3: version, current bank, working patch; the slots live in bank files.
-// v2 (read once, to migrate): version, slot-used mask, working patch and
-// eight slots, all 128-byte patches.
-static constexpr uint8_t kStorageVersion = 3;
+// v4: version, current bank, working patch; the slots live in bank files.
+// v3: the same with a 256-byte patch. v2 (read once, to migrate): version,
+// slot-used mask, working patch and eight slots, all 128-byte patches.
+static constexpr uint8_t kStorageVersion = 4;
+static constexpr uint8_t kStorageVersionV3 = 3;
 static constexpr uint8_t kStorageVersionV2 = 2;
 // Fixed at the v2 size: the platform discards saved data whose size changes,
 // so keeping it lets v2 data reach RestoreAppData() and migrate.
@@ -291,7 +364,7 @@ struct BankHeader {
   uint8_t slot_used; // bit per slot
   uint8_t pad[2];
 };
-static constexpr uint8_t kBankVersion = 1;
+static constexpr uint8_t kBankVersion = 2; // 384-byte patches; version 1 had 256
 static constexpr uint32_t kMessageMs = 2500; // how long "Saved" etc. stay up
 
 // Scope: a logic-analyser view of the app's own signals. Each column holds
@@ -300,8 +373,9 @@ static constexpr uint32_t kMessageMs = 2500; // how long "Saved" etc. stay up
 static constexpr int kScopeCols = 114;   // x = 14..127, after the labels
 static constexpr int kScopeTraces = 8;
 // Trace signals: 0 off, 1-4 CH1-CH4, 5-12 outputs A-H (on/off), 13-20 CV
-// inputs 1-8 (voltage, labelled V1-V8 so as not to clash with C1-C4).
-static constexpr int kScopeCVInputs = 8;
+// inputs 1-8 (voltage, labelled V1-V8 so as not to clash with C1-C4), 21-24
+// the mod sources (M1-M4).
+static constexpr int kScopeCVInputs = 8 + kNumMods;
 static constexpr int kScopeFirstCV = 1 + kNumChannels + 8;
 static constexpr int kScopeSignals = kScopeFirstCV + kScopeCVInputs;
 // CV traces store a column's lowest and highest voltage as int8, 72 CV units
@@ -357,13 +431,17 @@ public:
       chan_fell[ch] = !chan_high[ch] && chan_was[ch];
       chan_was[ch] = chan_high[ch];
     }
+    // The global reset comes first, so a clock arriving with it counts as the
+    // first; then the mod sources, so the channels read this tick's values.
+    if (TrigClock(global_reset, global_chan)) GlobalReset();
+    for (int i = 0; i < kNumMods; ++i) ModTick(i);
     for (int ch = 0; ch < kNumChannels; ++ch) gate[ch] = ProcessChannel(ch);
 
     // Preset by CV: the trigger picks a slot (by CV, or the next used slot
     // with no CV); Loop() loads it outside the interrupt.
     if (preset_trig.Clock()) {
       pending_slot = preset_cv.enabled()
-        ? constrain(preset_cv.In() * kNumSlots / (5 * ONE_OCTAVE), 0, kNumSlots - 1)
+        ? constrain(CVIn(preset_cv) * kNumSlots / (5 * ONE_OCTAVE), 0, kNumSlots - 1)
         : -2;
     }
 
@@ -383,7 +461,7 @@ public:
       // functions; the M7 functions aren't modulated.
       int fn = r.fn;
       if (fn_cv[o].enabled() && fn < kNumLogicFns)
-        fn = constrain(fn + fn_cv[o].In() * kNumLogicFns / (5 * ONE_OCTAVE), 0, kNumLogicFns - 1);
+        fn = constrain(fn + CVIn(fn_cv[o]) * kNumLogicFns / (5 * ONE_OCTAVE), 0, kNumLogicFns - 1);
       live_fn[o] = fn;
 
       if (fn == FN_CNT || fn == FN_BIN) {
@@ -463,6 +541,15 @@ private:
   bool chan_was[XandNorDefs::kNumChannels], chan_rose[XandNorDefs::kNumChannels],
        chan_fell[XandNorDefs::kNumChannels];
   CVInputMap fn_cv[8];
+  // Reset (M11): per channel, restarts the divider count, the Euclidean
+  // pattern and empties the delay queue. The global reset does every channel
+  // and restarts the LFOs, Random clocks, and TOGL/LTCH states.
+  DigitalInputMap reset_trig[XandNorDefs::kNumChannels];
+  uint8_t reset_chan[XandNorDefs::kNumChannels]; // a channel source, as chan_src
+  DigitalInputMap global_reset; // global, like the preset trigger
+  uint8_t global_chan = 0;
+  XandNorDefs::ModSource mods[XandNorDefs::kNumMods];
+  int mod_out[XandNorDefs::kNumMods]; // this tick's outputs, CV units
   // Preset by CV. Global: stored with every patch, but loading a slot leaves it
   // alone, so a CV-driven load can't change what drives the next one.
   CVInputMap preset_cv;
@@ -511,6 +598,8 @@ private:
   int mod_scroll = 0;
   int out_cursor = 0;   // Outputs page: output * 3 + field
   int out_scroll = 0;
+  int msrc_cursor = 0;  // Mods page: row * 2 + column
+  int msrc_scroll = 0;
 
   // Presets
   XandNorDefs::PackedPatch slots[XandNorDefs::kNumSlots];
@@ -551,10 +640,14 @@ private:
     using namespace XandNorDefs;
     ChannelState &s = state[ch];
 
+    // Reset before the trigger is read, so a clock arriving with it counts as
+    // the first.
+    if (TrigClock(reset_trig[ch], reset_chan[ch])) ResetChannel(ch);
+
     // Divider: the CV-adjusted value goes into the source before it's read.
     int div = div_steps[ch];
     if (div_cv[ch].enabled()) {
-      const int k = DivStepsToIndex(div) + div_cv[ch].In() * kDivStepsPerVolt / ONE_OCTAVE;
+      const int k = DivStepsToIndex(div) + CVIn(div_cv[ch]) * kDivStepsPerVolt / ONE_OCTAVE;
       div = DivIndexToSteps(constrain(k, kDivIndexMin, kDivIndexMax));
     }
     source[ch].div_mult.steps = div;
@@ -586,12 +679,12 @@ private:
     live_us[ch] = ModulatedLengthUs(ch);
     live_ticks[ch] = UsToTicks(live_us[ch]);
     if (clock_length[ch] && period[ch]) {
-      const int pct = constrain(clock_pct[ch] + length_cv[ch].In() * 100 / (5 * ONE_OCTAVE), 1, 100);
+      const int pct = constrain(clock_pct[ch] + CVIn(length_cv[ch]) * 100 / (5 * ONE_OCTAVE), 1, 100);
       live_ticks[ch] = max(period[ch] * pct / 100, kMinGateTicks);
       live_us[ch] = live_ticks[ch] * OC_CORE_TIMER_RATE;
     }
-    live_prob[ch] = constrain(prob[ch] + prob_cv[ch].In() * 100 / (5 * ONE_OCTAVE), 0, 100);
-    live_ratchets[ch] = constrain(ratchets[ch] + ratchet_cv[ch].In() * (kMaxRatchets - 1) / (5 * ONE_OCTAVE),
+    live_prob[ch] = constrain(prob[ch] + CVIn(prob_cv[ch]) * 100 / (5 * ONE_OCTAVE), 0, 100);
+    live_ratchets[ch] = constrain(ratchets[ch] + CVIn(ratchet_cv[ch]) * (kMaxRatchets - 1) / (5 * ONE_OCTAVE),
                                   1, kMaxRatchets);
 
     // Probability: a dropped trigger starts nothing and leaves a running gate alone.
@@ -669,6 +762,125 @@ private:
     (void)len;
   }
 
+  // A CV map's value, including the mod sources, which the platform's maps
+  // don't know about.
+  int CVIn(const CVInputMap &m) const {
+    if (m.source_type() == XandNorDefs::kModCVType)
+      return mod_out[m.index() & 3] * Atten(m.attenuversion) / 1000;
+    return m.In();
+  }
+
+  // A trigger with the channel-source option: a channel's start or end
+  // (last tick's edges), else the map's own trigger.
+  bool TrigClock(DigitalInputMap &m, uint8_t chan) {
+    const bool t = m.Clock(); // always called, to track edges
+    if (!chan) return t;
+    const int k = (chan - 1) / 2;
+    return ((chan - 1) % 2) ? chan_fell[k] : chan_rose[k];
+  }
+
+  // Restarts a channel's counting: the next trigger is the first of its
+  // division and of its Euclidean pattern; queued delays are dropped. A gate
+  // already running finishes.
+  void ResetChannel(int ch) {
+    source[ch].div_mult.Reset();
+    source[ch].clkcount = 0;
+    delay_count[ch] = 0;
+  }
+
+  void GlobalReset() {
+    using namespace XandNorDefs;
+    for (int ch = 0; ch < kNumChannels; ++ch) ResetChannel(ch);
+    for (int i = 0; i < kNumMods; ++i) mods[i].phase = 0;
+    for (int o = 0; o < 8; ++o) toggled[o] = false;
+  }
+
+  // An LFO waveform at a phase, -32768..32767. Sine starts at 0 going up.
+  static int32_t LfoWave(uint8_t wave, uint32_t phase) {
+    using namespace XandNorDefs;
+    const int32_t x = int32_t(phase >> 16); // 0..65535
+    switch (wave) {
+      case WAVE_TRI:    return x < 32768 ? 2 * x - 32768 : 98303 - 2 * x;
+      case WAVE_SAW:    return x - 32768;
+      case WAVE_RAMP:   return 32767 - x;
+      case WAVE_SQUARE: return x < 32768 ? 32767 : -32768;
+      default: {
+        // A parabola over -pi..pi, refined once: within about 0.1% of a sine.
+        const int32_t t = int16_t(phase >> 16);
+        int32_t y = (4 * t * (32768 - abs(t))) >> 15;
+        y += (((y * abs(y)) >> 15) - y) * 7373 >> 15; // 7373 = 0.225 * 32768
+        return constrain(y, -32768, 32767);
+      }
+    }
+  }
+
+  // A full-scale (-32768..32767) value to CV: +-amp, or 0..amp when unipolar.
+  static int ModScale(int32_t v, int32_t amp, bool bipolar) {
+    return bipolar ? v * amp / 32768 : (v + 32768) * amp / 65536;
+  }
+
+  // Ticks for a length-scale step (1 ms - 10 s); at least 1.
+  static int32_t StepTicks(int step) {
+    return max(int32_t(UsToTicks(XandNorDefs::kLengthUs[step - 1])), int32_t(1));
+  }
+
+  // One tick of mod source i.
+  void ModTick(int i) {
+    using namespace XandNorDefs;
+    ModSource &m = mods[i];
+    const bool trig = TrigClock(m.trig, m.trig_chan);
+    const int32_t amp = 5 * ONE_OCTAVE * m.level / 100;
+    switch (m.type) {
+      case MOD_LFO: { // the trigger restarts the cycle
+        if (trig) m.phase = 0;
+        mod_out[i] = ModScale(LfoWave(m.wave, m.phase), amp, m.bipolar);
+        m.phase += 0xffffffffu / max(UsToTicks(PeriodUs(m.period)), 1u);
+        break;
+      }
+      case MOD_RANDOM: { // a new value per trigger, or per period with none
+        bool clock = trig;
+        if (!m.trig.enabled() && !m.trig_chan) {
+          const uint32_t was = m.phase;
+          m.phase += 0xffffffffu / max(UsToTicks(PeriodUs(m.period)), 1u);
+          clock = m.phase < was; // wrapped: one period gone
+        }
+        if (clock) m.target = (int32_t(random(65536)) - 32768) << 8;
+        if (!m.glide) {
+          m.value = m.target;
+        } else { // glide: full scale in the glide time
+          const int32_t step = max((int32_t(65536) << 8) / StepTicks(m.glide), int32_t(1));
+          if (m.value < m.target) m.value = min(m.value + step, m.target);
+          else m.value = max(m.value - step, m.target);
+        }
+        mod_out[i] = ModScale(m.value >> 8, amp, m.bipolar);
+        break;
+      }
+      case MOD_SLEW: { // rise and fall times are for 5 V
+        const int32_t in = int32_t(CVIn(m.input)) << 8;
+        const int32_t full = int32_t(5 * ONE_OCTAVE) << 8;
+        if (in > m.value)
+          m.value = m.rise ? min(m.value + max(full / StepTicks(m.rise), int32_t(1)), in) : in;
+        else
+          m.value = m.fall ? max(m.value - max(full / StepTicks(m.fall), int32_t(1)), in) : in;
+        mod_out[i] = m.value >> 8;
+        break;
+      }
+      default: { // AD envelope up to the level; a trigger restarts the attack
+        const int32_t top = amp << 8;
+        if (trig) m.env_phase = 1;
+        if (m.env_phase == 1) {
+          m.value = m.rise ? m.value + max(top / StepTicks(m.rise), int32_t(1)) : top;
+          if (m.value >= top) { m.value = top; m.env_phase = 2; }
+        } else if (m.env_phase == 2) {
+          m.value = m.fall ? m.value - max(top / StepTicks(m.fall), int32_t(1)) : 0;
+          if (m.value <= 0) { m.value = 0; m.env_phase = 0; }
+        }
+        mod_out[i] = m.value >> 8;
+        break;
+      }
+    }
+  }
+
   static uint32_t UsToTicks(uint32_t us) {
     return (us + OC_CORE_TIMER_RATE / 2) / OC_CORE_TIMER_RATE;
   }
@@ -684,7 +896,7 @@ private:
     if (clock_length[ch] && (len == kLengthThru || len == kLengthInfinite)) len = kDefaultLengths[ch];
     if (len == kLengthThru || len == kLengthInfinite) return 0;
     // position on the step scale in 1/256 steps
-    const int32_t pos = len * 256 + length_cv[ch].In() * kStepsPerVolt * 256 / ONE_OCTAVE;
+    const int32_t pos = len * 256 + CVIn(length_cv[ch]) * kStepsPerVolt * 256 / ONE_OCTAVE;
     return StepPosToUs(constrain(pos, 256, kNumLengths * 256));
   }
 
@@ -693,7 +905,7 @@ private:
   uint32_t DelayTicks(int ch) const {
     using namespace XandNorDefs;
     if (!delay[ch] && !delay_cv[ch].enabled()) return 0;
-    const int32_t pos = delay[ch] * 256 + delay_cv[ch].In() * kStepsPerVolt * 256 / ONE_OCTAVE;
+    const int32_t pos = delay[ch] * 256 + CVIn(delay_cv[ch]) * kStepsPerVolt * 256 / ONE_OCTAVE;
     if (pos < 256) return 0;
     return UsToTicks(StepPosToUs(min(pos, int32_t(kNumLengths * 256))));
   }
@@ -770,7 +982,8 @@ private:
     const bool sample = !scope_peak;
     scope_acc = sample ? mask : (scope_acc | mask);
     for (int i = 0; i < kScopeCVInputs; ++i) {
-      const int8_t v = constrain(HS::frame.In(i) / kScopeCVScale, -128, 127);
+      const int in = i < 8 ? HS::frame.In(i) : mod_out[i - 8];
+      const int8_t v = constrain(in / kScopeCVScale, -128, 127);
       if (sample || v < scope_cv_acc[0][i]) scope_cv_acc[0][i] = v;
       if (sample || v > scope_cv_acc[1][i]) scope_cv_acc[1][i] = v;
     }
@@ -851,6 +1064,10 @@ private:
   void DrawPresets() const;
 
   void LoadDefaults();
+  void LoadDefaultMods();
+  void DrawModSources() const;
+  void ChangeModParam(int direction);
+  XandNorDefs::ModParam ModParamAt(int stop) const;
   void PackPatch(XandNorDefs::PackedPatch &p) const;
   void UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_global = false);
   void DrawMod() const;
@@ -901,7 +1118,10 @@ FLASHMEM void XandNor::LoadDefaults() {
     level[ch] = false;
     chan_src[ch] = 0;
     threshold_dv[ch] = kDefaultThresholdDv;
+    reset_trig[ch] = DigitalInputMap{};
+    reset_chan[ch] = 0;
   }
+  LoadDefaultMods();
   for (int o = 0; o < 8; ++o) {
     fn_cv[o] = CVInputMap();
     out_step[o] = CVSTEP_SEMI;
@@ -911,6 +1131,28 @@ FLASHMEM void XandNor::LoadDefaults() {
   }
   memset(&reserved_store, 0, sizeof(reserved_store));
   for (int o = 0; o < 8; ++o) routes[o] = kDefaultRoutes[o];
+}
+
+// One of each type: Mod1 an LFO, Mod2 Random, Mod3 a slew, Mod4 an envelope
+// on TR 1. Settings the type doesn't use still get sensible values, for when
+// the type changes.
+FLASHMEM void XandNor::LoadDefaultMods() {
+  using namespace XandNorDefs;
+  for (int i = 0; i < kNumMods; ++i) {
+    ModSource &m = mods[i];
+    m.type = i; // MOD_LFO, MOD_RANDOM, MOD_SLEW, MOD_ENV
+    m.wave = WAVE_SINE;
+    m.period = (i == MOD_RANDOM) ? kDefaultRandPeriod : kDefaultModPeriod;
+    m.level = 100;
+    m.bipolar = true;
+    m.rise = (i == MOD_ENV) ? kDefaultAttack : kDefaultSlew;
+    m.fall = (i == MOD_ENV) ? kDefaultDecay : kDefaultSlew;
+    m.glide = 0;
+    m.trig = DigitalInputMap{};
+    if (i == MOD_ENV) m.trig.SetGateInput(0);
+    m.trig_chan = 0;
+    m.input = CVInputMap();
+  }
 }
 
 FLASHMEM void XandNor::Start() {
@@ -930,6 +1172,14 @@ FLASHMEM void XandNor::Start() {
     chan_high[ch] = false;
   }
   for (int o = 0; o < kNumOutputs; ++o) out_high[o] = false;
+  for (int i = 0; i < kNumMods; ++i) {
+    mods[i].phase = 0;
+    mods[i].value = mods[i].target = 0;
+    mods[i].env_phase = 0;
+    mod_out[i] = 0;
+  }
+  global_reset = DigitalInputMap{};
+  global_chan = 0;
   bank = 0;
   bank_dirty = false;
   ReadBank(0); // RestoreAppData() switches to the saved bank
@@ -942,6 +1192,8 @@ FLASHMEM void XandNor::Start() {
   mod_scroll = 0;
   out_cursor = 0;
   out_scroll = 0;
+  msrc_cursor = 0;
+  msrc_scroll = 0;
   for (int o = 0; o < 8; ++o) {
     prev_a[o] = prev_b[o] = toggled[o] = false;
     env_phase[o] = 0;
@@ -1004,6 +1256,28 @@ FLASHMEM void XandNor::PackPatch(XandNorDefs::PackedPatch &p) const {
   p.ext_reserved[0] = preset_audio ? 0 : 1;  // stored inverted: zero = default On
   for (int ch = 0; ch < kNumChannels; ++ch) p.ext_reserved[1 + ch] = chan_src[ch];
   for (int o = 0; o < 8; ++o) p.routes[o] = routes[o];
+  for (int i = 0; i < kNumMods; ++i) {
+    const ModSource &m = mods[i];
+    PackedPatch::ModPacked &x = p.mod[i];
+    x.type = m.type;
+    x.wave = m.wave;
+    x.period = m.period;
+    x.level = m.level;
+    x.bipolar = m.bipolar;
+    x.trig = m.trig.Pack() & 0xff; // source only
+    x.trig_chan = m.trig_chan;
+    x.rise = m.rise;
+    x.fall = m.fall;
+    x.glide = m.glide;
+    x.input = m.input.Pack();
+  }
+  p.mods_set = 1;
+  for (int ch = 0; ch < kNumChannels; ++ch) {
+    p.reset_trig[ch] = reset_trig[ch].Pack() & 0xff;
+    p.reset_chan[ch] = reset_chan[ch];
+  }
+  p.global_reset = global_reset.Pack() & 0xff;
+  p.global_chan = global_chan;
 }
 
 // A zero stored CV map means "never set" (bytes reserved before the field
@@ -1011,6 +1285,14 @@ FLASHMEM void XandNor::PackPatch(XandNorDefs::PackedPatch &p) const {
 FLASHMEM static void UnpackCV(CVInputMap &m, uint16_t packed) {
   if (packed) m.Unpack(packed);
   else m = CVInputMap();
+}
+
+// A trigger stored as its source byte, plus a channel source (0 = none).
+FLASHMEM static void UnpackTrig(DigitalInputMap &m, uint8_t &chan, uint8_t src, uint8_t ch) {
+  DigitalInputMap t{}; // value-initialised: see LoadDefaults()
+  t.Unpack(src);
+  m = t;
+  chan = ch <= 2 * XandNorDefs::kNumChannels ? ch : 0;
 }
 
 // Validates as it goes, so a corrupt or foreign slot can't index out of range.
@@ -1046,7 +1328,28 @@ FLASHMEM void XandNor::UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_
     env_attack[o] = x.attack ? constrain(x.attack, 1, kNumLengths) : kDefaultAttack;
     env_decay[o] = x.decay ? constrain(x.decay, 1, kNumLengths) : kDefaultDecay;
   }
+  for (int ch = 0; ch < kNumChannels; ++ch)
+    UnpackTrig(reset_trig[ch], reset_chan[ch], p.reset_trig[ch], p.reset_chan[ch]);
+  if (!p.mods_set) {
+    LoadDefaultMods(); // saved before M11
+  } else {
+    for (int i = 0; i < kNumMods; ++i) {
+      ModSource &m = mods[i];
+      const PackedPatch::ModPacked &x = p.mod[i];
+      m.type = constrain(x.type, 0, MOD_TYPE_COUNT - 1);
+      m.wave = constrain(x.wave, 0, WAVE_COUNT - 1);
+      m.period = constrain(x.period, 1, kNumPeriods);
+      m.level = constrain(x.level, 0, 100);
+      m.bipolar = x.bipolar;
+      UnpackTrig(m.trig, m.trig_chan, x.trig, x.trig_chan);
+      m.rise = constrain(x.rise, 0, kNumLengths);
+      m.fall = constrain(x.fall, 0, kNumLengths);
+      m.glide = constrain(x.glide, 0, kNumLengths);
+      UnpackCV(m.input, x.input);
+    }
+  }
   if (with_global) {
+    UnpackTrig(global_reset, global_chan, p.global_reset, p.global_chan);
     UnpackCV(preset_cv, p.preset_cv);
     DigitalInputMap t{}; // value-initialised: see LoadDefaults()
     t.Unpack(p.preset_trig);
@@ -1339,8 +1642,16 @@ FLASHMEM int XandNor::ReadBankFrom(FS &fs, int b) {
   File f = fs.open(name, FILE_READ);
   if (!f) return 0;
   BankHeader h;
-  const bool ok = f.read(&h, sizeof(h)) == sizeof(h) && !memcmp(h.magic, "XNBK", 4) &&
-                  h.version == kBankVersion && f.read(slots, sizeof(slots)) == sizeof(slots);
+  bool ok = f.read(&h, sizeof(h)) == sizeof(h) && !memcmp(h.magic, "XNBK", 4);
+  if (ok && h.version == kBankVersion) {
+    ok = f.read(slots, sizeof(slots)) == sizeof(slots);
+  } else if (ok && h.version == 1) { // 256-byte patches: the M11 part reads as unset
+    memset(slots, 0, sizeof(slots));
+    for (int i = 0; ok && i < kNumSlots; ++i)
+      ok = f.read(&slots[i], kPatchV3Size) == kPatchV3Size;
+  } else {
+    ok = false;
+  }
   f.close();
   if (!ok) return -1;
   slot_used = h.slot_used;
@@ -1413,6 +1724,7 @@ FLASHMEM void XandNor::View() const {
     case PAGE_OVERVIEW: DrawOverview(); break;
     case PAGE_ROUTING:  DrawRouting(); break;
     case PAGE_CVMOD:      DrawMod(); break;
+    case PAGE_MODS:       DrawModSources(); break;
     case PAGE_OUTPUTS:    DrawOutputs(); break;
     default:            DrawChannelPage(page - PAGE_CHANNEL_A); break;
   }
@@ -1463,8 +1775,10 @@ FLASHMEM void XandNor::PrintMicros(uint32_t us) const {
     gfxPrint(int(us / 1000)); gfxPrint("."); gfxPrint(int(us / 100 % 10)); gfxPrint("ms");
   } else if (us < 1000000) {
     gfxPrint(int(us / 1000)); gfxPrint("ms");
-  } else {                 // 1.0 - 10.0 s
+  } else if (us < 10000000) { // 1.0 - 9.9 s
     gfxPrint(int(us / 1000000)); gfxPrint("."); gfxPrint(int(us / 100000 % 10)); gfxPrint("s");
+  } else {                     // 10 s and up (mod periods reach 60 s)
+    gfxPrint(int(us / 1000000)); gfxPrint("s");
   }
 }
 
@@ -1486,6 +1800,31 @@ FLASHMEM static void PrintInputName(int x, int y, const char *name) {
     gfxPrint(letter);
   } else {
     gfxPrint(x, y, name);
+  }
+}
+
+// A trigger source: a channel's start "CH1>" or end "CH1<", else the map's.
+FLASHMEM static void PrintTrigName(int x, int y, const DigitalInputMap &m, uint8_t chan) {
+  if (chan) {
+    gfxPrint(x, y, "CH");
+    gfxPrint((chan - 1) / 2 + 1);
+    gfxPrint((chan - 1) % 2 ? "<" : ">");
+  } else {
+    PrintInputName(x, y, m.InputName());
+  }
+}
+
+FLASHMEM static bool IsMod(const CVInputMap &m) {
+  return m.source_type() == XandNorDefs::kModCVType;
+}
+
+// A CV source, including the mod sources "Mod1"-"Mod4".
+FLASHMEM static void PrintCVName(int x, int y, const CVInputMap &m) {
+  if (IsMod(m)) {
+    gfxPrint(x, y, "Mod");
+    gfxPrint((m.index() & 3) + 1);
+  } else {
+    PrintInputName(x, y, m.InputName());
   }
 }
 
@@ -1520,16 +1859,10 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
   for (int r = scroll; r < scroll + kVisibleRows && r < kChannelRows; ++r) {
     const int y = 13 + (r - scroll) * 9;
     // In level mode the "Len by" row sets the threshold instead.
-    gfxPrint(1, y, (r == 3 && level[ch]) ? "Thresh:" : kRowLabels[r]);
+    gfxPrint(1, y, (r == 4 && level[ch]) ? "Thresh:" : kRowLabels[r]);
     switch (r) {
       case 0:
-        if (chan_src[ch]) { // "CH1>" a channel's start, "CH1<" its end
-          gfxPrint(52, y, "CH");
-          gfxPrint((chan_src[ch] - 1) / 2 + 1);
-          gfxPrint((chan_src[ch] - 1) % 2 ? "<" : ">");
-        } else {
-          PrintInputName(52, y, source[ch].InputName());
-        }
+        PrintTrigName(52, y, source[ch], chan_src[ch]);
         PrintDiv(80, y, div_steps[ch]);
         if (div_cv[ch].enabled() && source[ch].div_mult.steps != div_steps[ch]) {
           DrawArrow(100, y);
@@ -1537,6 +1870,9 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
         }
         break;
       case 1:
+        PrintTrigName(52, y, reset_trig[ch], reset_chan[ch]);
+        break;
+      case 2:
         gfxPos(52, y);
         if (clock_length[ch]) {
           gfxPrint(clock_pct[ch]);
@@ -1553,11 +1889,11 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
           PrintMicros(live_us[ch]);
         }
         break;
-      case 2:
-        PrintInputName(52, y, length_cv[ch].InputName());
+      case 3:
+        PrintCVName(52, y, length_cv[ch]);
         PrintDepth(88, y, length_cv[ch]);
         break;
-      case 3:
+      case 4:
         if (level[ch]) {
           gfxPrint(52, y, threshold_dv[ch] / 10);
           gfxPrint(".");
@@ -1567,7 +1903,7 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
           gfxPrint(52, y, clock_length[ch] ? "Clock" : "Time");
         }
         break;
-      case 4: {
+      case 5: {
         gfxPos(52, y);
         if (delay[ch]) PrintMicros(kLengthUs[delay[ch] - 1]);
         else gfxPrint("Off");
@@ -1580,11 +1916,11 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
         }
         break;
       }
-      case 5:
-        PrintInputName(52, y, delay_cv[ch].InputName());
+      case 6:
+        PrintCVName(52, y, delay_cv[ch]);
         PrintDepth(88, y, delay_cv[ch]);
         break;
-      case 6:
+      case 7:
         gfxPrint(52, y, prob[ch]);
         gfxPrint("%");
         if (prob_cv[ch].enabled()) {
@@ -1593,23 +1929,23 @@ FLASHMEM void XandNor::DrawChannelPage(int ch) const {
           gfxPrint("%");
         }
         break;
-      case 7:
-        PrintInputName(52, y, prob_cv[ch].InputName());
+      case 8:
+        PrintCVName(52, y, prob_cv[ch]);
         PrintDepth(88, y, prob_cv[ch]);
         break;
-      case 8:
+      case 9:
         gfxPrint(52, y, ratchets[ch]);
         if (ratchet_cv[ch].enabled()) {
           DrawArrow(86, y);
           gfxPrint(94, y, live_ratchets[ch]);
         }
         break;
-      case 9:
-        PrintInputName(52, y, ratchet_cv[ch].InputName());
+      case 10:
+        PrintCVName(52, y, ratchet_cv[ch]);
         PrintDepth(88, y, ratchet_cv[ch]);
         break;
-      case 10:
-        PrintInputName(52, y, div_cv[ch].InputName());
+      case 11:
+        PrintCVName(52, y, div_cv[ch]);
         PrintDepth(88, y, div_cv[ch]);
         break;
       default:
@@ -1658,6 +1994,7 @@ FLASHMEM void XandNor::DrawScope(bool interactive) const {
     const int sig = scope_traces[i];
     if (interactive) { // the screensaver drops the labels
       if (!sig) gfxPrint(1, y, "--");
+      else if (sig >= kScopeFirstCV + 8) { gfxPrint(1, y, "M"); gfxPrint(sig - kScopeFirstCV - 7); }
       else if (sig >= kScopeFirstCV) { gfxPrint(1, y, "V"); gfxPrint(sig - kScopeFirstCV + 1); }
       else if (sig <= kNumChannels) { gfxPrint(1, y, "C"); gfxPrint(sig); }
       else { const char n[2] = { char('A' + sig - 1 - kNumChannels), '\0' }; gfxPrint(4, y, n); }
@@ -1798,6 +2135,77 @@ FLASHMEM void XandNor::DrawOutputs() const {
   }
 }
 
+// The Mods page's field at a cursor stop (row * 2 + column), by the source's
+// type; MP_NONE where there's none.
+FLASHMEM XandNorDefs::ModParam XandNor::ModParamAt(int stop) const {
+  using namespace XandNorDefs;
+  const int row = stop / 2, col = stop % 2;
+  if (row >= kNumMods * kModSrcRowsPer) return col ? MP_NONE : MP_RESET;
+  return kModLayout[mods[row / kModSrcRowsPer].type][row % kModSrcRowsPer][col];
+}
+
+FLASHMEM void XandNor::DrawModSources() const {
+  using namespace XandNorDefs;
+  auto PrintStep = [this](int step) { // a length-scale step, 0 = off
+    if (step) PrintMicros(kLengthUs[step - 1]);
+    else gfxPrint("Off");
+  };
+  for (int r = msrc_scroll; r < msrc_scroll + kVisibleRows && r < kModSrcRows; ++r) {
+    const int y = 13 + (r - msrc_scroll) * 9;
+    if (r == kModSrcRows - 1) { // the global reset
+      gfxPrint(1, y, "Rst all:");
+      PrintTrigName(52, y, global_reset, global_chan);
+      continue;
+    }
+    const int i = r / kModSrcRowsPer;
+    const ModSource &m = mods[i];
+    if (r % kModSrcRowsPer == 0) {
+      // "Mod1: LFO" and a meter: a bar from the centre, +-5 V across 34 pixels
+      gfxPrint(1, y, "Mod");
+      gfxPrint(i + 1);
+      gfxPrint(":");
+      gfxPrint(52, y, kModTypeNames[m.type]);
+      gfxDottedLine(88, y + 3, 122, y + 3);
+      gfxLine(105, y, 105, y + 6);
+      const int w = constrain(mod_out[i] * 17 / (5 * ONE_OCTAVE), -17, 17);
+      if (w > 0) gfxRect(106, y + 2, w, 3);
+      if (w < 0) gfxRect(105 + w, y + 2, -w, 3);
+      continue;
+    }
+    for (int col = 0; col < 2; ++col) {
+      const ModParam p = kModLayout[m.type][r % kModSrcRowsPer][col];
+      const int x = col ? 88 : 52;
+      if (!col) { // the row's label comes from its first field
+        const char *label =
+          p == MP_WAVE ? "Wave:" : p == MP_INPUT ? "Input:" : p == MP_PERIOD ? "Period:"
+          : p == MP_LEVEL ? "Level:" : p == MP_GLIDE ? "Glide:"
+          : p == MP_TRIG ? (m.type == MOD_LFO ? "Sync:" : "Trig:")
+          : p == MP_RISE ? (m.type == MOD_ENV ? "Attack:" : "Rise:")
+          : p == MP_FALL ? (m.type == MOD_ENV ? "Decay:" : "Fall:") : "";
+        gfxPrint(1, y, label);
+      }
+      gfxPos(x, y);
+      switch (p) {
+        case MP_WAVE:     gfxPrint(kWaveNames[m.wave]); break;
+        case MP_POLARITY: gfxPrint(m.bipolar ? "Bi" : "Uni"); break;
+        case MP_TRIG:     PrintTrigName(x, y, m.trig, m.trig_chan); break;
+        case MP_INPUT:    PrintCVName(x, y, m.input); break;
+        case MP_DEPTH:    PrintDepth(x, y, m.input); break;
+        case MP_PERIOD:   PrintMicros(PeriodUs(m.period)); break;
+        case MP_RISE:     PrintStep(m.rise); break;
+        case MP_FALL:     PrintStep(m.fall); break;
+        case MP_GLIDE:    PrintStep(m.glide); break;
+        case MP_LEVEL:    gfxPrint(m.level); gfxPrint("%"); break;
+        default: break;
+      }
+    }
+  }
+  DrawScrollBar(msrc_scroll, kModSrcRows);
+  const ModParam p = ModParamAt(msrc_cursor);
+  const int row = msrc_cursor / 2;
+  DrawFieldCursor((msrc_cursor % 2 ? 88 : 52) - 1, 13 + (row - msrc_scroll) * 9 + 8, ParamWidth(p));
+}
+
 FLASHMEM void XandNor::DrawMod() const {
   using namespace XandNorDefs;
   for (int r = mod_scroll; r < mod_scroll + kVisibleRows && r < kModRows; ++r) {
@@ -1806,13 +2214,13 @@ FLASHMEM void XandNor::DrawMod() const {
       // "A  C 3  100%  > XOR": output, function CV, depth, function in use
       const char name[2] = { char('A' + r), '\0' };
       gfxPrint(1, y, name);
-      PrintInputName(14, y, fn_cv[r].InputName());
+      PrintCVName(14, y, fn_cv[r]);
       PrintDepth(40, y, fn_cv[r]);
       if (fn_cv[r].enabled()) DrawArrow(74, y);
       gfxPrint(82, y, kFunctionNames[live_fn[r]]);
     } else if (r == 8) {
       gfxPrint(1, y, "Preset:");
-      PrintInputName(52, y, preset_cv.InputName());
+      PrintCVName(52, y, preset_cv);
       PrintDepth(88, y, preset_cv);
     } else if (r == 9) {
       gfxPrint(1, y, "Load on:");
@@ -1976,6 +2384,18 @@ FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
     if (row >= out_scroll + kVisibleRows) out_scroll = row - kVisibleRows + 1;
     return;
   }
+  if (page == PAGE_MODS) {
+    // Step through the fields each source's type has.
+    int c = msrc_cursor;
+    do {
+      c += (direction > 0) ? 1 : -1;
+    } while (c >= 0 && c < 2 * kModSrcRows && ModParamAt(c) == MP_NONE);
+    if (c >= 0 && c < 2 * kModSrcRows) msrc_cursor = c;
+    const int row = msrc_cursor / 2;
+    if (row < msrc_scroll) msrc_scroll = row;
+    if (row >= msrc_scroll + kVisibleRows) msrc_scroll = row - kVisibleRows + 1;
+    return;
+  }
   if (page == PAGE_CVMOD) {
     mod_cursor = constrain(mod_cursor + direction, 0, MOD_COUNT - 1);
     const int row = ModFieldPos(mod_cursor).row;
@@ -1990,24 +2410,54 @@ FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
   if (row >= scroll + kVisibleRows) scroll = row - kVisibleRows + 1;
 }
 
-// The Source list: the platform's, with the channel sources inserted after
-// CV 8: ... CV 7, CV 8, CH1>, CH1<, ... CH4<, then the outputs, MIDI ...
-FLASHMEM void XandNor::ChangeChannelSource(int ch, int direction) {
+// Trigger source lists: the platform's, with the channel sources inserted
+// after CV 8: ... CV 7, CV 8, CH1>, CH1<, ... CH4<, then the outputs, MIDI ...
+FLASHMEM static void ChangeTrigSource(DigitalInputMap &m, uint8_t &chan, int direction) {
   using namespace XandNorDefs;
-  DigitalInputMap &m = source[ch];
-  if (chan_src[ch]) {
-    const int v = chan_src[ch] + direction;
-    if (v < 1) { chan_src[ch] = 0; m.SetInput(ADC_CHANNEL_COUNT - 1); }       // back to CV 8
-    else if (v > 2 * kNumChannels) { chan_src[ch] = 0; m.SetOutput(0); }  // on to the first output
-    else chan_src[ch] = v;
+  if (chan) {
+    const int v = chan + direction;
+    if (v < 1) { chan = 0; m.SetInput(ADC_CHANNEL_COUNT - 1); }       // back to CV 8
+    else if (v > 2 * kNumChannels) { chan = 0; m.SetOutput(0); }  // on to the first output
+    else chan = v;
     return;
   }
   if (direction > 0 && m.source_type() == DigitalInputMap::TYPE_ADC && m.index() == ADC_CHANNEL_COUNT - 1) {
-    chan_src[ch] = 1; // CV 8 -> CH1>
+    chan = 1; // CV 8 -> CH1>
     return;
   }
   if (direction < 0 && m.source_type() == DigitalInputMap::TYPE_DAC && m.index() == 0) {
-    chan_src[ch] = 2 * kNumChannels; // first output -> CH4<
+    chan = 2 * kNumChannels; // first output -> CH4<
+    return;
+  }
+  m.ChangeSource(direction);
+}
+
+FLASHMEM void XandNor::ChangeChannelSource(int ch, int direction) {
+  ChangeTrigSource(source[ch], chan_src[ch], direction);
+}
+
+// A CV map pointing at mod source k, keeping its depth.
+FLASHMEM static void SetModSource(CVInputMap &m, int k) {
+  m.Unpack(uint16_t((XandNorDefs::kModCVType | k) | (uint8_t(m.attenuversion) << 8)));
+}
+
+// CV source lists: the platform's, with the mod sources inserted after CV 8:
+// ... CV 7, CV 8, Mod1 ... Mod4, then the outputs, MIDI ...
+FLASHMEM static void ChangeCVSource(CVInputMap &m, int direction) {
+  using namespace XandNorDefs;
+  if (IsMod(m)) {
+    const int k = (m.index() & 3) + direction;
+    if (k < 0) m.SetInput(ADC_CHANNEL_COUNT - 1);  // back to CV 8
+    else if (k >= kNumMods) m.SetOutput(0);        // on to the first output
+    else SetModSource(m, k);
+    return;
+  }
+  if (direction > 0 && m.source_type() == CVInputMap::TYPE_ADC && m.index() == ADC_CHANNEL_COUNT - 1) {
+    SetModSource(m, 0);
+    return;
+  }
+  if (direction < 0 && m.source_type() == CVInputMap::TYPE_DAC && m.index() == 0) {
+    SetModSource(m, kNumMods - 1);
     return;
   }
   m.ChangeSource(direction);
@@ -2056,13 +2506,17 @@ FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
     }
     return;
   }
+  if (page == PAGE_MODS && !preset_mode) {
+    ChangeModParam(direction);
+    return;
+  }
   if (page == PAGE_CVMOD && !preset_mode) {
     if (mod_cursor < MOD_PRESET_CV) {
       CVInputMap &m = fn_cv[mod_cursor / 2];
       if (mod_cursor % 2) AdjustDepth(m, direction);
-      else m.ChangeSource(direction);
+      else ChangeCVSource(m, direction);
     } else if (mod_cursor == MOD_PRESET_CV) {
-      preset_cv.ChangeSource(direction);
+      ChangeCVSource(preset_cv, direction);
     } else if (mod_cursor == MOD_PRESET_DEPTH) {
       AdjustDepth(preset_cv, direction);
     } else if (mod_cursor == MOD_PRESET_TRIG) {
@@ -2097,6 +2551,9 @@ FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
     case FIELD_SOURCE:
       ChangeChannelSource(ch, direction);
       break;
+    case FIELD_RESET:
+      ChangeTrigSource(reset_trig[ch], reset_chan[ch], direction);
+      break;
     case FIELD_DIV:
       div_steps[ch] = DivIndexToSteps(
         constrain(DivStepsToIndex(div_steps[ch]) + direction, kDivIndexMin, kDivIndexMax));
@@ -2119,25 +2576,53 @@ FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
     case FIELD_DELAY:
       delay[ch] = constrain(delay[ch] + direction, 0, kNumLengths);
       break;
-    case FIELD_DELAY_CV:   delay_cv[ch].ChangeSource(direction); break;
+    case FIELD_DELAY_CV:   ChangeCVSource(delay_cv[ch], direction); break;
     case FIELD_DELAY_DEPTH: AdjustDepth(delay_cv[ch], direction); break;
-    case FIELD_LEN_CV:   length_cv[ch].ChangeSource(direction); break;
+    case FIELD_LEN_CV:   ChangeCVSource(length_cv[ch], direction); break;
     case FIELD_LEN_DEPTH: AdjustDepth(length_cv[ch], direction); break;
     case FIELD_PROB:
       prob[ch] = constrain(prob[ch] + direction, 0, 100);
       break;
-    case FIELD_PROB_CV:  prob_cv[ch].ChangeSource(direction); break;
+    case FIELD_PROB_CV:  ChangeCVSource(prob_cv[ch], direction); break;
     case FIELD_PROB_DEPTH: AdjustDepth(prob_cv[ch], direction); break;
     case FIELD_RATCHET:
       ratchets[ch] = constrain(ratchets[ch] + direction, 1, kMaxRatchets);
       break;
-    case FIELD_RAT_CV:   ratchet_cv[ch].ChangeSource(direction); break;
+    case FIELD_RAT_CV:   ChangeCVSource(ratchet_cv[ch], direction); break;
     case FIELD_RAT_DEPTH: AdjustDepth(ratchet_cv[ch], direction); break;
-    case FIELD_DIV_CV:   div_cv[ch].ChangeSource(direction); break;
+    case FIELD_DIV_CV:   ChangeCVSource(div_cv[ch], direction); break;
     case FIELD_DIV_DEPTH: AdjustDepth(div_cv[ch], direction); break;
     default:
       cv_mode[ch] = constrain(cv_mode[ch] + direction, 0, CV_MODE_COUNT - 1);
       break;
+  }
+}
+
+FLASHMEM void XandNor::ChangeModParam(int direction) {
+  using namespace XandNorDefs;
+  const ModParam p = ModParamAt(msrc_cursor);
+  if (p == MP_RESET) {
+    ChangeTrigSource(global_reset, global_chan, direction);
+    return;
+  }
+  ModSource &m = mods[msrc_cursor / 2 / kModSrcRowsPer];
+  switch (p) {
+    case MP_TYPE:
+      m.type = constrain(m.type + direction, 0, MOD_TYPE_COUNT - 1);
+      m.env_phase = 0;
+      m.value = m.target = 0;
+      break;
+    case MP_WAVE:     m.wave = constrain(m.wave + direction, 0, WAVE_COUNT - 1); break;
+    case MP_POLARITY: m.bipolar = direction < 0; break; // Bi first, Uni to the right
+    case MP_TRIG:     ChangeTrigSource(m.trig, m.trig_chan, direction); break;
+    case MP_INPUT:    ChangeCVSource(m.input, direction); break;
+    case MP_DEPTH:    AdjustDepth(m.input, direction); break;
+    case MP_PERIOD:   m.period = constrain(m.period + direction, 1, kNumPeriods); break;
+    case MP_RISE:     m.rise = constrain(m.rise + direction, 0, kNumLengths); break;
+    case MP_FALL:     m.fall = constrain(m.fall + direction, 0, kNumLengths); break;
+    case MP_GLIDE:    m.glide = constrain(m.glide + direction, 0, kNumLengths); break;
+    case MP_LEVEL:    m.level = constrain(m.level + direction, 0, 100); break;
+    default: break;
   }
 }
 
@@ -2171,10 +2656,17 @@ FLASHMEM size_t XandNor::RestoreAppData(util::StreamBufferReader &stream_buffer)
   using namespace XandNorDefs;
   const uint8_t version = stream_buffer.Read<uint8_t>();
 
-  if (version == kStorageVersion) {
+  if (version == kStorageVersion || version == kStorageVersionV3) {
     const uint8_t b = stream_buffer.Read<uint8_t>();
     PackedPatch working;
-    stream_buffer.Read(working);
+    memset(&working, 0, sizeof(working)); // v3: the M11 part reads as unset
+    if (version == kStorageVersion) {
+      stream_buffer.Read(working);
+    } else {
+      uint8_t raw[kPatchV3Size];
+      stream_buffer.Read(raw);
+      memcpy(&working, raw, kPatchV3Size);
+    }
     if (stream_buffer.underflow()) return stream_buffer.read();
     SelectBank(constrain(b, 0, kNumBanks - 1));
     UnpackPatch(working, true);

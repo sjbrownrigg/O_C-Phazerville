@@ -1075,6 +1075,7 @@ private:
   void DrawModSources() const;
   void ChangeModParam(int direction);
   XandNorDefs::ModParam ModParamAt(int stop) const;
+  int ModRowY(int r) const;
   void PackPatch(XandNorDefs::PackedPatch &p) const;
   void UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_global = false);
   void DrawMod() const;
@@ -2151,16 +2152,29 @@ FLASHMEM XandNorDefs::ModParam XandNor::ModParamAt(int stop) const {
   return kModLayout[mods[row / kModSrcRowsPer].type][row % kModSrcRowsPer][col];
 }
 
+// The Mods page's rows are 9 pixels apart, with a 7-pixel gap before each
+// Mod's first row (and the global reset) for its separator; the gap at the
+// top of the screen is left out. Returns the row's y, or -1 if it's off
+// screen: five rows fit, or four when a gap is in view.
+FLASHMEM int XandNor::ModRowY(int r) const {
+  using namespace XandNorDefs;
+  if (r < msrc_scroll || r >= kModSrcRows) return -1;
+  int y = 13;
+  for (int i = msrc_scroll + 1; i <= r; ++i) y += (i % kModSrcRowsPer == 0) ? 16 : 9;
+  return y + 8 <= 57 ? y : -1; // clear of the page dots
+}
+
 FLASHMEM void XandNor::DrawModSources() const {
   using namespace XandNorDefs;
   auto PrintStep = [this](int step) { // a length-scale step, 0 = off
     if (step) PrintMicros(kLengthUs[step - 1]);
     else gfxPrint("Off");
   };
-  for (int r = msrc_scroll; r < msrc_scroll + kVisibleRows && r < kModSrcRows; ++r) {
-    const int y = 13 + (r - msrc_scroll) * 9;
-    // A dotted rule above each Mod and the global reset, except at the top.
-    if (r % kModSrcRowsPer == 0 && r > msrc_scroll) gfxDottedLine(0, y - 1, 122, y - 1);
+  for (int r = msrc_scroll; ModRowY(r) >= 0; ++r) {
+    const int y = ModRowY(r);
+    // A dotted rule above each Mod and the global reset, with 3 blank pixels
+    // either side (above: below the last row's cursor line), except at the top.
+    if (r % kModSrcRowsPer == 0 && r > msrc_scroll) gfxDottedLine(0, y - 4, 122, y - 4);
     if (r == kModSrcRows - 1) { // the global reset
       gfxPrint(1, y, "Rst all:");
       PrintTrigName(52, y, global_reset, global_chan);
@@ -2212,7 +2226,7 @@ FLASHMEM void XandNor::DrawModSources() const {
   DrawScrollBar(msrc_scroll, kModSrcRows);
   const ModParam p = ModParamAt(msrc_cursor);
   const int row = msrc_cursor / 2;
-  DrawFieldCursor((msrc_cursor % 2 ? 88 : 52) - 1, 13 + (row - msrc_scroll) * 9 + 8, ParamWidth(p));
+  DrawFieldCursor((msrc_cursor % 2 ? 88 : 52) - 1, ModRowY(row) + 8, ParamWidth(p));
 }
 
 FLASHMEM void XandNor::DrawMod() const {
@@ -2402,7 +2416,7 @@ FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
     if (c >= 0 && c < 2 * kModSrcRows) msrc_cursor = c;
     const int row = msrc_cursor / 2;
     if (row < msrc_scroll) msrc_scroll = row;
-    if (row >= msrc_scroll + kVisibleRows) msrc_scroll = row - kVisibleRows + 1;
+    while (ModRowY(row) < 0) ++msrc_scroll; // scroll until the row is on screen
     return;
   }
   if (page == PAGE_CVMOD) {

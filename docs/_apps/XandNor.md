@@ -172,12 +172,12 @@ Four internal modulators, **Mod1**–**Mod4**, that any CV row can use: pick the
 
 | Type | What it does | Settings |
 | --- | --- | --- |
-| **LFO** | A free-running oscillator | **Wave**: Sine, Tri, Saw (rising), Ramp (falling), Sqr. **Period**: 1 ms to 60 s. **Level** and **Bi**/**Uni**. **Sync**: a trigger that restarts the cycle |
-| **Rand** | A random voltage, held until the next change (sample and hold) | **Trig**: a new value on each trigger; with no trigger, a new value every **Period**. **Level** and **Bi**/**Uni**. **Glide**: Off, or the time a full-scale change takes, for smooth random |
+| **LFO** | A free-running oscillator | **Wave**: Sine, Tri, Saw (rising), Ramp (falling), Sqr. **Period**: 1 ms to 60 s. **Level** and polarity. **Sync**: a trigger that restarts the cycle |
+| **Rand** | A random voltage, held until the next change (sample and hold) | **Trig**: a new value on each trigger; with no trigger, a new value every **Period**. **Level** and polarity. **Glide**: Off, or the time a full-scale change takes, for smooth random |
 | **Slew** | Another signal, smoothed | **Input**: any CV source (a CV input, an output, another Mod) with its depth. **Rise** and **Fall**: Off, or the time to move 5 V |
 | **Env** | An attack/decay envelope | **Trig**: what starts it; a new trigger restarts the attack from the current level. **Attack**, **Decay**: Off (instant) or 1 ms to 10 s. **Level** |
 
-- **Level** is 0–100% of 5 V. **Bi** swings ±Level around 0 V; **Uni** goes from 0 V to +Level.
+- **Level** is 0–100% of 5 V. Polarity: **Bi** swings ±Level around 0 V; **Uni+** goes from 0 V up to +Level; **Uni-** from 0 V down to −Level.
 - Each Mod's first row shows its type, with a meter of its output beside it: a bar to the right of the centre line for positive voltages, to the left for negative.
 - **Trig** and **Sync** offer the same sources as a channel's Source, including the channels (**CH1>** a channel's start, **CH1<** its end).
 - The defaults are one of each: **Mod1** a 1 s sine LFO, **Mod2** a random voltage every 500 ms, **Mod3** a slew (no input yet, 100 ms each way), **Mod4** an envelope on TR 1 (2 ms attack, 200 ms decay). Presets saved before the Mods existed load with these.
@@ -188,7 +188,7 @@ Four internal modulators, **Mod1**–**Mod4**, that any CV row can use: pick the
 
 ### Examples
 
-- **Swing that breathes:** give CH2's Delay CV **Mod1** (a slow LFO, set to **Uni**) at a low depth, so CH2 drifts late and back.
+- **Swing that breathes:** give CH2's Delay CV **Mod1** (a slow LFO, set to **Uni+**) at a low depth, so CH2 drifts late and back.
 - **Random gate lengths:** set CH1's Length CV to **Mod2**, with Mod2's **Trig** on the same input as CH1's Source (TR 1): the Mods update before the channels, so each gate starts with a fresh random length.
 - **Fading density:** set CH1's Prob to 0% and its Prob CV to **Mod4** (Env) triggered by **CH3>**, with a long decay: right after each CH3 gate CH1 fires every time, then thins out as the envelope falls.
 - **Slewed function sweep:** a **Slew** with Input **OutG** (a BIN output) smooths the staircase into a ramp, which can then drive another channel's Length.
@@ -201,6 +201,8 @@ The O.R.N.8's audio applets, exactly as in Quadrants' audio setup. While (X)AND(
 On this page all short presses of A, B, X and Y and both encoders go to the audio engine. Pressing **A** or **B** at its top level moves to the previous or next page. Long-press **A** or **Y** for presets, or **X** for Routing.
 
 The audio setup is shared with Quadrants: changes made in either app appear in the other.
+
+The audio applets can take their triggers and CVs from (X)AND(N)OR's outputs with no patching: see [Driving the audio applets](#driving-the-audio-applets).
 
 ## Scope
 
@@ -293,3 +295,12 @@ Set CH2 to TR 1 with a length of about 80% of the clock period (or **Len by: Clo
 ### Off-beats and swing from one clock
 
 With the default patch running, set CH2 to **x1**, **Delay** to half the clock period, and its Length to 10 ms: output B now fires on the off-beat. Patch a slow LFO into CH2's Delay **CV** for a moving swing feel, and route **E** to **OR 1 2** for a combined on-and-off-beat pattern.
+
+### Driving the audio applets
+
+Each audio applet picks its trigger and CV inputs from the platform's source list, which includes (X)AND(N)OR's outputs. On the Audio page they keep the platform's names, **#A**–**#H**, rather than OutA–OutH. The Mods aren't in that list: only (X)AND(N)OR's own CV rows can read them.
+
+- **A drum on every clock:** load **FM Drum** into an audio slot and set its trigger to **#E**. In the default patch E is CH1 XOR CH2, the slice from 10 ms to 50 ms after each clock, so the drum fires once per clock. For a sparser pattern, route E to **OUT 2** and lower CH2's **Prob**.
+- **Envelope filter:** set output H to **ENV** (AD, 2 ms attack, 300 ms decay) on CH1, and set a filter applet's cutoff CV (Ladder or FilterFolder, for example) to **#H**. Each CH1 gate sweeps the filter.
+- **Internal melody:** set output G to **BIN** with **Semi** steps (see [Using BIN](#using-bin)), and set an oscillator applet's pitch CV (HarmOsc, for example) to **#G**. The channel pattern plays as notes.
+- **Rhythmic delay:** use a **CNT** output with **1/3V** steps as a delay applet's time or feedback CV. The delay follows how many channels are high.

@@ -2545,21 +2545,26 @@ FLASHMEM void XandNor::OnDownButtonPress() {
 }
 
 // The next cursor stop from c, one step in the direction, among count stops
-// numbered from 0; wraps from the last back to the first and the other way.
-// valid(n) says whether stop n exists. Returns c if no other stop does.
+// numbered from 0; with wrap, from the last back to the first and the other
+// way, else it stops at the ends. valid(n) says whether stop n exists.
+// Returns c if no other stop does.
 // (No FLASHMEM: it has no effect on templates; this inlines into its callers.)
 template <typename Valid>
-static int NextStop(int c, int direction, int count, Valid valid) {
+static int NextStop(int c, int direction, int count, Valid valid, bool wrap = true) {
   const int step = direction > 0 ? 1 : -1;
   for (int i = 1; i <= count; ++i) {
-    const int n = ((c + step * i) % count + count) % count;
+    int n = c + step * i;
+    if (!wrap && (n < 0 || n >= count)) return c;
+    n = (n % count + count) % count;
     if (valid(n)) return n;
   }
   return c;
 }
 
-// Left encoder: the cursor. On every page it wraps from the last field to the
-// first and back.
+// Left encoder: the cursor. It wraps from the last field to the first and
+// back on the pages that fit one screen or keep fixed columns (Routing,
+// Outputs, Global, Scope) and the channel pages; on the Mods page, whose rows
+// change with each Mod's type, it stops at the ends so you keep your place.
 FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
   using namespace XandNorDefs;
   if (preset_mode) { // left encoder: bank (loads it at once)
@@ -2611,7 +2616,7 @@ FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
   if (page == PAGE_MODS) {
     // Step through the fields each source's type has.
     msrc_cursor = NextStop(msrc_cursor, direction, 2 * ModRowCount(),
-                           [this](int c) { return ModParamAt(c) != MP_NONE; });
+                           [this](int c) { return ModParamAt(c) != MP_NONE; }, false);
     const int row = msrc_cursor / 2;
     if (row < msrc_scroll) msrc_scroll = row;
     while (ModRowY(row) < 0) ++msrc_scroll; // scroll until the row is on screen

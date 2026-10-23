@@ -155,7 +155,7 @@ A trigger that arrives while the gate is still high briefly drops the gate (240 
 
 ### CV scaling
 
-Each CV row has a depth (the platform's attenuverter, −448% to +448%; 100% is the default). At 100%:
+Each CV row has a depth, from −370% to +370%: 1% steps up to 100%, then 10% steps. 100% is the default. If the steps feel slow, turn on encoder acceleration in the platform's settings. At 100%:
 
 | CV target | +5 V gives |
 | --- | --- |
@@ -258,11 +258,11 @@ Each logic output's function CV moves its function on from the one set on the Ro
 - Several outputs can share one CV source, each with its own depth.
 - The sources are the usual [CV sources](#cv-sources).
 
-**Depth for gate sources.** A gate output is 0 or 5 V, so at 100% it jumps all the way to XNOR. To step one function per gate, set the depth to about **13%**; two functions need about **25%**. The depth readout shows the percentage actually applied.
+**Depth for gate sources.** A gate output is 0 or 5 V, so at 100% it jumps all the way to XNOR. To step one function per gate, set the depth to **13%**; two functions need **25%**.
 
 ### Function CV examples
 
-- **Flip a logic output with a gate:** set E to **AND 1 2** on Routing, then give E the source **OutH** at about 13%. While H is high, E becomes **NAND**, its exact inverse.
+- **Flip a logic output with a gate:** set E to **AND 1 2** on Routing, then give E the source **OutH** at 13%. While H is high, E becomes **NAND**, its exact inverse.
 - **A function sequencer:** give output F a slow stepped random voltage, or a **BIN** output at **1/3V** steps from this app, at 100% depth. F then walks through the logic functions as the voltage changes, while the Overview and Scope show the result.
 - **No cables:** set F to **AND 2 3** on Routing, then give it the source **Mod2** (Rand) at about 40% depth. Every 500 ms a new random value picks a function a few steps either side of AND, so the pattern changes by itself.
 - **Feedback:** an output modulating its own function (A with source **OutA**) can lock up or oscillate depending on its channels. It's unpredictable, which can be the point.
@@ -374,7 +374,7 @@ Long-press **A** or press **Y** to open the preset overlay: 100 banks of 8 slots
 Slots holding a patch carry a dot; the active slot is framed twice. The footer badge shows where banks are stored, **[SD]** or **[Int]**, and saving or changing bank confirms it, e.g. "Saved [SD]" or "3 saved [SD]".
 
 - **Storage.** Each bank is a file, `XNBANK00.DAT` to `XNBANK99.DAT`, with a companion `XNAUDnn.DAT` holding the slots' audio setups. Files go to the microSD card when one is ready, otherwise to the Teensy's internal flash. Every save is read back and checked; if the card fails, the save falls back to internal flash. Bank files left in internal flash move to the card automatically when one is present. A FAT32 (or exFAT) card is recommended: internal flash is smaller and can stutter while saving.
-- **Older presets.** Banks and the working patch from earlier versions load as before; their Mods take the defaults and their Resets are off. A bank is rewritten in the new format the next time one of its slots is saved.
+- **Older presets.** Banks and the working patch from earlier versions load as before; their Mods take the defaults and their Resets are off. CV depths saved before the 1% depth steps are converted to the nearest new value (for example 49.0% becomes 49%), and anything above 370% becomes 370%. A bank is rewritten in the new format the next time one of its slots is saved.
 - **Audio in presets.** Saving a slot also stores the audio applet setup; loading applies it unless **Audio** is Off on the Global page. Slots saved before this existed have no audio setup and leave audio alone.
 - **The working patch.** Your current settings and bank number are kept with the platform's normal app save: long-press the right encoder on (X)AND(N)OR in the app menu. Preset slots are saved to their files at once when you press A.
 

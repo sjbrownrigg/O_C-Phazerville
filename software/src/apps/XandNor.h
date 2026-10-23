@@ -216,6 +216,22 @@ static constexpr uint8_t kDefaultAttack = 4;  // 2 ms, a step on the length scal
 static constexpr uint8_t kDefaultDecay = 24;  // 200 ms
 static constexpr int32_t kEnvMax = 5 * ONE_OCTAVE * 256; // 5 V, 8 fractional bits
 
+// CV depth: (X)AND(N)OR reads a CV map's attenuversion byte on its own scale,
+// 1% steps up to 100%, then 10% steps up to 370%, so round values such as 50%
+// can be set. (The platform's curve, 60 = 100%, steps about 1.7% near 100%
+// and skips them.) Patches saved before this hold the platform's values and
+// are converted as they load.
+static constexpr int8_t kDepthUnity = 100;
+static constexpr int DepthTenths(int8_t att) { // in 0.1%
+  return (att < 0 ? -1 : 1) * (abs(att) <= 100 ? abs(att) * 10 : 1000 + (abs(att) - 100) * 100);
+}
+static constexpr int8_t DepthFromPlatform(int8_t att) {
+  return int8_t((att < 0 ? -1 : 1) * (abs(Atten(att)) <= 1000 ? (abs(Atten(att)) + 5) / 10
+                                      : min(100 + (abs(Atten(att)) - 1000 + 50) / 100, 127)));
+}
+static_assert(DepthTenths(kDepthUnity) == 1000 && DepthFromPlatform(60) == kDepthUnity &&
+              DepthFromPlatform(-60) == -kDepthUnity && DepthTenths(127) == 3700, "depth scale");
+
 // Mod sources (M11): four internal modulators, Mod1-Mod4, offered in every CV
 // source list after CV 8. Each is an LFO, a random (sample and hold) voltage,
 // a slew of another signal, or an AD envelope.
@@ -345,7 +361,8 @@ struct PackedPatch {
   // M12: each output's ENV attack and decay CV, CVInputMap::Pack() as two
   // bytes, low first (byte arrays: the offset here is odd).
   uint8_t env_cv[8][2][2];
-  uint8_t v4_reserved[21];
+  uint8_t depth_scale;   // 1 = CV depths on DepthTenths()' scale; 0 = the platform's
+  uint8_t v4_reserved[20];
 };
 static_assert(sizeof(PackedPatch) == 384, "PackedPatch layout changed");
 static constexpr size_t kPatchV2Size = 128; // the patch before ext existed
@@ -816,8 +833,8 @@ private:
   // don't know about.
   int CVIn(const CVInputMap &m) const {
     if (m.source_type() == XandNorDefs::kModCVType)
-      return mod_out[m.index() & 3] * Atten(m.attenuversion) / 1000;
-    return m.In();
+      return mod_out[m.index() & 3] * XandNorDefs::DepthTenths(m.attenuversion) / 1000;
+    return m.RawIn() * XandNorDefs::DepthTenths(m.attenuversion) / 1000;
   }
 
   // A trigger with the channel-source option: a channel's start or end
@@ -1182,6 +1199,13 @@ private:
 
 // -- Setup -------------------------------------------------------------------
 
+// A CV map with no source at 100% depth on (X)AND(N)OR's scale.
+FLASHMEM static CVInputMap DefaultCV() {
+  CVInputMap m;
+  m.attenuversion = XandNorDefs::kDepthUnity;
+  return m;
+}
+
 FLASHMEM void XandNor::LoadDefaults() {
   using namespace XandNorDefs;
   // Unpack rather than Clear(): Clear() resets edge detection, so a high input
@@ -1193,16 +1217,16 @@ FLASHMEM void XandNor::LoadDefaults() {
   for (int ch = 0; ch < kNumChannels; ++ch) {
     source[ch].Unpack(t1.Pack());
     length[ch] = kDefaultLengths[ch];
-    length_cv[ch] = CVInputMap();
+    length_cv[ch] = DefaultCV();
     cv_mode[ch] = CV_SAMPLE;
     prob[ch] = 100;
-    prob_cv[ch] = CVInputMap();
+    prob_cv[ch] = DefaultCV();
     ratchets[ch] = 1;
-    ratchet_cv[ch] = CVInputMap();
+    ratchet_cv[ch] = DefaultCV();
     div_steps[ch] = 1;
-    div_cv[ch] = CVInputMap();
+    div_cv[ch] = DefaultCV();
     delay[ch] = 0;
-    delay_cv[ch] = CVInputMap();
+    delay_cv[ch] = DefaultCV();
     clock_length[ch] = false;
     clock_pct[ch] = kDefaultClockPct;
     level[ch] = false;
@@ -1213,14 +1237,14 @@ FLASHMEM void XandNor::LoadDefaults() {
   }
   LoadDefaultMods();
   for (int o = 0; o < 8; ++o) {
-    fn_cv[o] = CVInputMap();
+    fn_cv[o] = DefaultCV();
     out_step[o] = CVSTEP_SEMI;
     env_mode[o] = EMODE_AD;
     env_attack[o] = kDefaultAttack;
     env_decay[o] = kDefaultDecay;
-    att_cv[o] = CVInputMap();
-    dec_cv[o] = CVInputMap();
-    sh_cv[o] = CVInputMap();
+    att_cv[o] = DefaultCV();
+    dec_cv[o] = DefaultCV();
+    sh_cv[o] = DefaultCV();
     out_mod[o] = 0;
   }
   memset(&reserved_store, 0, sizeof(reserved_store));
@@ -1245,9 +1269,9 @@ FLASHMEM void XandNor::LoadDefaultMods() {
     m.trig = DigitalInputMap{};
     if (i == MOD_ENV) m.trig.SetGateInput(0);
     m.trig_chan = 0;
-    m.input = CVInputMap();
-    m.period_cv = CVInputMap();
-    m.level_cv = CVInputMap();
+    m.input = DefaultCV();
+    m.period_cv = DefaultCV();
+    m.level_cv = DefaultCV();
   }
 }
 
@@ -1296,7 +1320,7 @@ FLASHMEM void XandNor::Start() {
     sh_value[o] = 0;
   }
   for (int o = 0; o < 8; ++o) live_fn[o] = routes[o].fn;
-  preset_cv = CVInputMap();
+  preset_cv = DefaultCV();
   preset_trig = DigitalInputMap{};
   scope_trig = DigitalInputMap{};
   scope_trig.SetGateInput(0); // T1
@@ -1375,6 +1399,7 @@ FLASHMEM void XandNor::PackPatch(XandNorDefs::PackedPatch &p) const {
     x.level_cv = m.level_cv.Pack();
   }
   p.mods_set = 1;
+  p.depth_scale = 1;
   for (int ch = 0; ch < kNumChannels; ++ch) {
     p.reset_trig[ch] = reset_trig[ch].Pack() & 0xff;
     p.reset_chan[ch] = reset_chan[ch];
@@ -1385,9 +1410,14 @@ FLASHMEM void XandNor::PackPatch(XandNorDefs::PackedPatch &p) const {
 
 // A zero stored CV map means "never set" (bytes reserved before the field
 // existed): use the default, whose depth is 100% rather than Unpack(0)'s 0%.
-FLASHMEM static void UnpackCV(CVInputMap &m, uint16_t packed) {
-  if (packed) m.Unpack(packed);
-  else m = CVInputMap();
+// platform_scale: the patch predates (X)AND(N)OR's own depth scale.
+FLASHMEM static void UnpackCV(CVInputMap &m, uint16_t packed, bool platform_scale) {
+  if (packed) {
+    m.Unpack(packed);
+    if (platform_scale) m.attenuversion = XandNorDefs::DepthFromPlatform(m.attenuversion);
+  } else {
+    m = DefaultCV();
+  }
 }
 
 // A trigger stored as its source byte, plus a channel source (0 = none).
@@ -1402,21 +1432,22 @@ FLASHMEM static void UnpackTrig(DigitalInputMap &m, uint8_t &chan, uint8_t src, 
 FLASHMEM void XandNor::UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_global) {
   using namespace XandNorDefs;
   reserved_store = p;
+  const bool old_depths = !p.depth_scale; // depths saved on the platform's curve
   for (int ch = 0; ch < kNumChannels; ++ch) {
     source[ch].Unpack(p.source[ch]);
     length[ch] = constrain(p.length[ch], kLengthThru, kLengthInfinite);
     div_steps[ch] = source[ch].div_mult.steps; // Unpack never leaves 0
     chan_src[ch] = p.ext_reserved[1 + ch] <= 2 * kNumChannels ? p.ext_reserved[1 + ch] : 0;
     const ChannelExtras &e = p.extras[ch];
-    UnpackCV(length_cv[ch], e.length_cv);
+    UnpackCV(length_cv[ch], e.length_cv, old_depths);
     cv_mode[ch] = constrain(e.cv_mode, 0, CV_MODE_COUNT - 1);
     prob[ch] = 100 - constrain(e.prob_skip, 0, 100);
-    UnpackCV(prob_cv[ch], e.prob_cv);
+    UnpackCV(prob_cv[ch], e.prob_cv, old_depths);
     ratchets[ch] = 1 + constrain(e.ratchet_extra, 0, kMaxRatchets - 1);
-    UnpackCV(ratchet_cv[ch], e.ratchet_cv);
-    UnpackCV(div_cv[ch], e.div_cv);
+    UnpackCV(ratchet_cv[ch], e.ratchet_cv, old_depths);
+    UnpackCV(div_cv[ch], e.div_cv, old_depths);
     delay[ch] = constrain(e.delay, 0, kNumLengths);
-    UnpackCV(delay_cv[ch], e.delay_cv);
+    UnpackCV(delay_cv[ch], e.delay_cv, old_depths);
     clock_pct[ch] = e.clock_pct ? constrain(e.clock_pct, 1, 100) : kDefaultClockPct;
     clock_length[ch] = e.flags & kFlagClockLength;
     level[ch] = e.flags & kFlagLevel;
@@ -1424,16 +1455,16 @@ FLASHMEM void XandNor::UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_
     if (level[ch]) length[ch] = kLengthThru; // level mode lives below Thru
   }
   for (int o = 0; o < 8; ++o) {
-    UnpackCV(fn_cv[o], p.fn_cv[o]);
+    UnpackCV(fn_cv[o], p.fn_cv[o], old_depths);
     const PackedPatch::OutputExtras &x = p.out[o];
     out_step[o] = constrain(x.step, 0, CVSTEP_COUNT - 1);
     env_mode[o] = constrain(x.env_mode, 0, EMODE_COUNT - 1);
     env_attack[o] = x.attack ? constrain(x.attack, 1, kNumLengths) : kDefaultAttack;
     env_decay[o] = x.decay ? constrain(x.decay, 1, kNumLengths) : kDefaultDecay;
-    UnpackCV(sh_cv[o], x.sh_cv);
+    UnpackCV(sh_cv[o], x.sh_cv, old_depths);
     out_mod[o] = x.mod_src & 3;
-    UnpackCV(att_cv[o], uint16_t(p.env_cv[o][0][0] | p.env_cv[o][0][1] << 8));
-    UnpackCV(dec_cv[o], uint16_t(p.env_cv[o][1][0] | p.env_cv[o][1][1] << 8));
+    UnpackCV(att_cv[o], uint16_t(p.env_cv[o][0][0] | p.env_cv[o][0][1] << 8), old_depths);
+    UnpackCV(dec_cv[o], uint16_t(p.env_cv[o][1][0] | p.env_cv[o][1][1] << 8), old_depths);
   }
   for (int ch = 0; ch < kNumChannels; ++ch)
     UnpackTrig(reset_trig[ch], reset_chan[ch], p.reset_trig[ch], p.reset_chan[ch]);
@@ -1452,14 +1483,14 @@ FLASHMEM void XandNor::UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_
       m.rise = constrain(x.rise, 0, kNumLengths);
       m.fall = constrain(x.fall, 0, kNumLengths);
       m.glide = constrain(x.glide, 0, kNumLengths);
-      UnpackCV(m.input, x.input);
-      UnpackCV(m.period_cv, x.period_cv);
-      UnpackCV(m.level_cv, x.level_cv);
+      UnpackCV(m.input, x.input, old_depths);
+      UnpackCV(m.period_cv, x.period_cv, old_depths);
+      UnpackCV(m.level_cv, x.level_cv, old_depths);
     }
   }
   if (with_global) {
     UnpackTrig(global_reset, global_chan, p.global_reset, p.global_chan);
-    UnpackCV(preset_cv, p.preset_cv);
+    UnpackCV(preset_cv, p.preset_cv, old_depths);
     DigitalInputMap t{}; // value-initialised: see LoadDefaults()
     t.Unpack(p.preset_trig);
     preset_trig = t;
@@ -1938,7 +1969,7 @@ FLASHMEM static void PrintCVName(int x, int y, const CVInputMap &m) {
 }
 
 FLASHMEM void XandNor::PrintDepth(int x, int y, const CVInputMap &m) const {
-  const int tenths = Atten(m.attenuversion);
+  const int tenths = XandNorDefs::DepthTenths(m.attenuversion);
   gfxPos(x, y);
   if (tenths < 0) gfxPrint("-");
   gfxPrint(abs(tenths) / 10);

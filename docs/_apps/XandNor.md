@@ -218,7 +218,7 @@ One row per output: its letter, the function in use, then that function's settin
 | OUT … XNOR (logic) | The **function CV** and its depth: see [Function by CV](#function-by-cv) |
 | TOGL, LTCH | None: the row is blank and the cursor skips it |
 | CNT, BIN | Step size: **Semi** (a semitone, for pitch), **1/3V** or **1V** |
-| ENV | Mode **AD** (each rising edge runs attack then decay, whatever the gate length) or **ASR** (attack, hold while the gate is high, then release), attack (default 2 ms) and decay or release (default 200 ms) on the 1 ms – 10 s scale. Two more rows below it, **Att** and **Dec**: the CV for the attack and decay times, each a source and depth in the same columns as the other outputs' CV |
+| ENV | Mode **AD** (each rising edge runs attack then decay, whatever the gate length) or **ASR** (attack, hold while the gate is high, then release), attack (default 2 ms) and decay or release (default 200 ms) on the 1 ms – 10 s scale. Two more rows below it, **Att** and **Dec** (**Rel** in ASR mode): the CV for the attack and decay or release times, each a source and depth in the same columns as the other outputs' CV |
 | MOD | Which Mod, **Mod1**–**Mod4**: the output carries that Mod's voltage |
 | S&H | A CV source and depth, sampled each time the output's channel starts and held until the next |
 

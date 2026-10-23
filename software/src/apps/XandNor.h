@@ -2265,7 +2265,8 @@ FLASHMEM void XandNor::DrawOutputs() const {
     const uint8_t fn = routes[o].fn;
     if (sub) { // ENV's attack and decay CV: indented to the function column,
                // with the source and depth in the other outputs' CV columns
-      gfxPrint(10, y, sub == 1 ? "Att" : "Dec");
+      // ASR's second time is its release
+      gfxPrint(10, y, sub == 1 ? "Att" : env_mode[o] == EMODE_ASR ? "Rel" : "Dec");
       const CVInputMap &cv = sub == 1 ? att_cv[o] : dec_cv[o];
       PrintCVName(40, y, cv);
       PrintDepth(92, y, cv);
@@ -2600,6 +2601,9 @@ FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
       --out_scroll;
       return;
     }
+    // Wrapping shows the whole first (or last) screen, including any output
+    // with no settings there, then scrolls as usual.
+    if (wraps) out_scroll = direction > 0 ? 0 : max_scroll;
     out_cursor = n;
     out_scroll = OutputScrollFor(OutputRowOf(n));
     return;

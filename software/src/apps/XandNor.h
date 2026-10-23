@@ -421,7 +421,7 @@ static const char * const kPresetHint = "Up:Save  Down:Load";
 #endif
 
 enum OutParam : uint8_t {
-  OP_NONE, OP_BLANK, OP_FN_CV, OP_FN_DEPTH, OP_STEP, OP_ENV_MODE, OP_ATTACK, OP_DECAY,
+  OP_NONE, OP_FN_CV, OP_FN_DEPTH, OP_STEP, OP_ENV_MODE, OP_ATTACK, OP_DECAY,
   OP_ATT_CV, OP_ATT_DEPTH, OP_DEC_CV, OP_DEC_DEPTH, OP_MOD, OP_SH_CV, OP_SH_DEPTH
 };
 struct OutField { OutParam p; uint8_t x, w; };
@@ -435,11 +435,14 @@ static constexpr OutField OutputField(uint8_t fn, int sub, int col) {
                                                               : OutField{OP_NONE, 0, 0})
        : fn == FN_ENV ? (sub == 0 ? (col == 0 ? OutField{OP_ENV_MODE, 36, 18} : col == 1 ? OutField{OP_ATTACK, 58, 30}
                                                                              : OutField{OP_DECAY, 92, 30})
-                       : col == 0 ? OutField{sub == 1 ? OP_ATT_CV : OP_DEC_CV, 58, 24}
-                       : col == 1 ? OutField{sub == 1 ? OP_ATT_DEPTH : OP_DEC_DEPTH, 88, 30}
+                       : col == 0 ? OutField{sub == 1 ? OP_ATT_CV : OP_DEC_CV, 40, 24}
+                       : col == 1 ? OutField{sub == 1 ? OP_ATT_DEPTH : OP_DEC_DEPTH, 70, 30}
                        : OutField{OP_NONE, 0, 0})
-       : (col == 0 ? OutField{OP_BLANK, 40, 7} : OutField{OP_NONE, 0, 0}); // TOGL, LTCH: no settings
+       : OutField{OP_NONE, 0, 0}; // TOGL, LTCH: no settings, so no stop
 }
+// Outputs page cursor stops: output * 9 + row within the output * 3 + field,
+// so the cursor keeps its output and field when other outputs change.
+static constexpr int kOutputStops = 9 * kNumOutputs;
 
 } // namespace XandNorDefs
 
@@ -643,7 +646,7 @@ private:
   int scroll = 0;       // first visible channel-page row
   int route_cursor = 0; // routing page: output * ROUTE_FIELDS + field
   int glob_cursor = 0;  // Global page: a GlobalField
-  int out_cursor = 0;   // Outputs page: row * 3 + field (rows as OutputRowAt())
+  int out_cursor = 0;   // Outputs page: a stop (kOutputStops), see OutputCursor()
   int out_scroll = 0;
   int msrc_cursor = 0;  // Mods page: row * 2 + column
   int msrc_scroll = 0;
@@ -1151,6 +1154,9 @@ private:
   bool OutputRowAt(int r, int &o, int &sub) const;
   int OutputRowCount() const;
   XandNorDefs::OutField OutputFieldAt(int stop) const;
+  int OutputCursor() const;
+  int OutputRowOf(int stop) const;
+  int OutputScrollFor(int row) const;
   void DrawGlobal() const;
   void ChangeOutputParam(int direction);
   void PackPatch(XandNorDefs::PackedPatch &p) const;
@@ -2212,24 +2218,56 @@ FLASHMEM int XandNor::OutputRowCount() const {
 
 FLASHMEM XandNorDefs::OutField XandNor::OutputFieldAt(int stop) const {
   using namespace XandNorDefs;
-  int o, sub;
-  if (stop < 0 || !OutputRowAt(stop / 3, o, sub)) return OutField{OP_NONE, 0, 0};
-  return OutputField(routes[o].fn, sub, stop % 3);
+  if (stop < 0 || stop >= kOutputStops) return OutField{OP_NONE, 0, 0};
+  const uint8_t fn = routes[stop / 9].fn;
+  const int sub = stop % 9 / 3;
+  if (sub >= OutputRows(fn)) return OutField{OP_NONE, 0, 0};
+  return OutputField(fn, sub, stop % 3);
+}
+
+// The cursor's stop, or, when a function change on Routing has removed its
+// field, the nearest field before it (else after it); -1 if no output has any.
+FLASHMEM int XandNor::OutputCursor() const {
+  using namespace XandNorDefs;
+  for (int c = out_cursor; c >= 0; --c)
+    if (OutputFieldAt(c).p != OP_NONE) return c;
+  for (int c = out_cursor + 1; c < kOutputStops; ++c)
+    if (OutputFieldAt(c).p != OP_NONE) return c;
+  return -1;
+}
+
+// The page row a stop is drawn on.
+FLASHMEM int XandNor::OutputRowOf(int stop) const {
+  using namespace XandNorDefs;
+  int row = stop % 9 / 3;
+  for (int o = 0; o < stop / 9; ++o) row += OutputRows(routes[o].fn);
+  return row;
+}
+
+// out_scroll, moved as little as needed to show the row.
+FLASHMEM int XandNor::OutputScrollFor(int row) const {
+  using namespace XandNorDefs;
+  int scroll = constrain(out_scroll, 0, max(OutputRowCount() - kVisibleRows, 0));
+  if (row < scroll) scroll = row;
+  if (row >= scroll + kVisibleRows) scroll = row - kVisibleRows + 1;
+  return scroll;
 }
 
 FLASHMEM void XandNor::DrawOutputs() const {
   using namespace XandNorDefs;
   const int rows = OutputRowCount();
-  for (int r = out_scroll; r < out_scroll + kVisibleRows && r < rows; ++r) {
-    const int y = 13 + (r - out_scroll) * 9;
+  const int cur = OutputCursor();
+  const int scroll = cur >= 0 ? OutputScrollFor(OutputRowOf(cur)) : out_scroll;
+  for (int r = scroll; r < scroll + kVisibleRows && r < rows; ++r) {
+    const int y = 13 + (r - scroll) * 9;
     int o, sub;
     OutputRowAt(r, o, sub);
     const uint8_t fn = routes[o].fn;
-    if (sub) { // ENV's CV rows
-      gfxPrint(10, y, sub == 1 ? "Att CV:" : "Dec CV:");
+    if (sub) { // ENV's CV rows, in the same columns as the other outputs' CV
+      gfxPrint(1, y, sub == 1 ? "Att CV" : "Dec CV");
       const CVInputMap &cv = sub == 1 ? att_cv[o] : dec_cv[o];
-      PrintCVName(58, y, cv);
-      PrintDepth(88, y, cv);
+      PrintCVName(40, y, cv);
+      PrintDepth(70, y, cv);
       continue;
     }
     const char name[2] = { char('A' + o), '\0' };
@@ -2252,15 +2290,12 @@ FLASHMEM void XandNor::DrawOutputs() const {
     } else if (fn == FN_SH) {
       PrintCVName(40, y, sh_cv[o]);
       PrintDepth(70, y, sh_cv[o]);
-    } else {
-      gfxPrint(40, y, "-");
-    }
+    } // TOGL, LTCH: no settings, left blank
   }
-  if (rows > kVisibleRows) DrawScrollBar(out_scroll, rows);
-  const OutField f = OutputFieldAt(out_cursor);
-  const int row = out_cursor / 3;
-  if (f.p != OP_NONE && row >= out_scroll && row < out_scroll + kVisibleRows)
-    DrawFieldCursor(f.x - 1, 13 + (row - out_scroll) * 9 + 8, f.w);
+  if (rows > kVisibleRows) DrawScrollBar(scroll, rows);
+  if (cur < 0) return;
+  const OutField f = OutputFieldAt(cur);
+  DrawFieldCursor(f.x - 1, 13 + (OutputRowOf(cur) - scroll) * 9 + 8, f.w);
 }
 
 // Mods page row r: its mod and the mod's row (by its type); false past the end.
@@ -2532,19 +2567,26 @@ FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
     return;
   }
   if (page == PAGE_OUTPUTS) {
-    // A function changed on Routing can leave the cursor on a field that's
-    // gone: start again from the top.
-    if (OutputFieldAt(out_cursor).p == OP_NONE) out_cursor = out_scroll = 0;
-    // Step through the fields that exist.
-    const int last = 3 * OutputRowCount() - 1;
-    int c = out_cursor;
+    int c = OutputCursor(); // a field that has gone falls back to the one before
+    if (c < 0) return;
+    out_scroll = OutputScrollFor(OutputRowOf(c));
+    // Step through the fields that exist, skipping outputs with none.
+    int n = c;
     do {
-      c += (direction > 0) ? 1 : -1;
-    } while (c >= 0 && c <= last && OutputFieldAt(c).p == OP_NONE);
-    if (c >= 0 && c <= last) out_cursor = c;
-    const int row = out_cursor / 3;
-    if (row < out_scroll) out_scroll = row;
-    if (row >= out_scroll + kVisibleRows) out_scroll = row - kVisibleRows + 1;
+      n += (direction > 0) ? 1 : -1;
+    } while (n >= 0 && n < kOutputStops && OutputFieldAt(n).p == OP_NONE);
+    if (n >= 0 && n < kOutputStops) {
+      out_cursor = n;
+      out_scroll = OutputScrollFor(OutputRowOf(n));
+    } else {
+      // Past the first or last field: scroll on anyway, while the cursor
+      // stays in view, so outputs with no settings at either end show.
+      out_cursor = c;
+      const int row = OutputRowOf(c);
+      const int s2 = constrain(out_scroll + (direction > 0 ? 1 : -1), 0,
+                               max(OutputRowCount() - kVisibleRows, 0));
+      if (row >= s2 && row < s2 + kVisibleRows) out_scroll = s2;
+    }
     return;
   }
   if (page == PAGE_MODS) {
@@ -2774,9 +2816,11 @@ FLASHMEM void XandNor::ChangeModParam(int direction) {
 
 FLASHMEM void XandNor::ChangeOutputParam(int direction) {
   using namespace XandNorDefs;
-  int o, sub;
-  const OutField f = OutputFieldAt(out_cursor);
-  if (f.p == OP_NONE || !OutputRowAt(out_cursor / 3, o, sub)) return;
+  const int c = OutputCursor();
+  if (c < 0) return;
+  out_cursor = c;
+  const int o = c / 9;
+  const OutField f = OutputFieldAt(c);
   switch (f.p) {
     case OP_FN_CV:     ChangeCVSource(fn_cv[o], direction); break;
     case OP_FN_DEPTH:  AdjustDepth(fn_cv[o], direction); break;
@@ -2791,7 +2835,7 @@ FLASHMEM void XandNor::ChangeOutputParam(int direction) {
     case OP_MOD:       out_mod[o] = constrain(out_mod[o] + direction, 0, kNumMods - 1); break;
     case OP_SH_CV:     ChangeCVSource(sh_cv[o], direction); break;
     case OP_SH_DEPTH:  AdjustDepth(sh_cv[o], direction); break;
-    default: break; // OP_BLANK: nothing to set
+    default: break;
   }
 }
 

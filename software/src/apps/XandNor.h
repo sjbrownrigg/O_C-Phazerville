@@ -2543,6 +2543,22 @@ FLASHMEM void XandNor::OnDownButtonPress() {
   page = (page + 1) % XandNorDefs::PAGE_COUNT;
 }
 
+// The next cursor stop from c, one step in the direction, among count stops
+// numbered from 0; wraps from the last back to the first and the other way.
+// valid(n) says whether stop n exists. Returns c if no other stop does.
+// (No FLASHMEM: it has no effect on templates; this inlines into its callers.)
+template <typename Valid>
+static int NextStop(int c, int direction, int count, Valid valid) {
+  const int step = direction > 0 ? 1 : -1;
+  for (int i = 1; i <= count; ++i) {
+    const int n = ((c + step * i) % count + count) % count;
+    if (valid(n)) return n;
+  }
+  return c;
+}
+
+// Left encoder: the cursor. On every page it wraps from the last field to the
+// first and back.
 FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
   using namespace XandNorDefs;
   if (preset_mode) { // left encoder: bank (loads it at once)
@@ -2552,63 +2568,57 @@ FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
   }
   if (page == PAGE_ROUTING) {
     // Step through fields, skipping the second channel of OUT and NOT.
-    const int last = kNumOutputs * ROUTE_FIELDS - 1;
-    int c = route_cursor;
-    do {
-      c += (direction > 0) ? 1 : -1;
-    } while (c >= 0 && c <= last &&
-             ((c % ROUTE_FIELDS == ROUTE_B && !TwoInputs(routes[c / ROUTE_FIELDS].fn)) ||
-              (c % ROUTE_FIELDS == ROUTE_A && !UsesA(routes[c / ROUTE_FIELDS].fn))));
-    if (c >= 0 && c <= last) route_cursor = c;
+    route_cursor = NextStop(route_cursor, direction, kNumOutputs * ROUTE_FIELDS, [this](int c) {
+      const uint8_t fn = routes[c / ROUTE_FIELDS].fn;
+      return !((c % ROUTE_FIELDS == ROUTE_B && !TwoInputs(fn)) ||
+               (c % ROUTE_FIELDS == ROUTE_A && !UsesA(fn)));
+    });
     return;
   }
   if (page == PAGE_SCOPE) {
-    scope_cursor = constrain(scope_cursor + direction, 0, SCOPE_FIELDS - 1);
+    scope_cursor = NextStop(scope_cursor, direction, SCOPE_FIELDS, [](int) { return true; });
     ScopeFollowCursor();
     return;
   }
   if (page == PAGE_OUTPUTS) {
-    int c = OutputCursor(); // a field that has gone falls back to the one before
+    const int c = OutputCursor(); // a field that has gone falls back to the one before
     if (c < 0) return;
-    out_scroll = OutputScrollFor(OutputRowOf(c));
-    // Step through the fields that exist, skipping outputs with none.
-    int n = c;
-    do {
-      n += (direction > 0) ? 1 : -1;
-    } while (n >= 0 && n < kOutputStops && OutputFieldAt(n).p == OP_NONE);
-    if (n >= 0 && n < kOutputStops) {
-      out_cursor = n;
-      out_scroll = OutputScrollFor(OutputRowOf(n));
-    } else {
-      // Past the first or last field: scroll on anyway, while the cursor
-      // stays in view, so outputs with no settings at either end show.
-      out_cursor = c;
-      const int row = OutputRowOf(c);
-      const int s2 = constrain(out_scroll + (direction > 0 ? 1 : -1), 0,
-                               max(OutputRowCount() - kVisibleRows, 0));
-      if (row >= s2 && row < s2 + kVisibleRows) out_scroll = s2;
+    const int row = OutputRowOf(c);
+    out_scroll = OutputScrollFor(row);
+    // At the first or last field, first scroll the rest of the way to that
+    // end (outputs with no settings there have no stop to scroll to them),
+    // then wrap round.
+    auto valid = [this](int n) { return OutputFieldAt(n).p != OP_NONE; };
+    const int n = NextStop(c, direction, kOutputStops, valid);
+    const bool wraps = direction > 0 ? n <= c : n >= c;
+    const int max_scroll = max(OutputRowCount() - kVisibleRows, 0);
+    if (wraps && direction > 0 && out_scroll < max_scroll && row > out_scroll) {
+      ++out_scroll;
+      return;
     }
+    if (wraps && direction < 0 && out_scroll > 0 && row < out_scroll + kVisibleRows - 1) {
+      --out_scroll;
+      return;
+    }
+    out_cursor = n;
+    out_scroll = OutputScrollFor(OutputRowOf(n));
     return;
   }
   if (page == PAGE_MODS) {
     // Step through the fields each source's type has.
-    const int last = 2 * ModRowCount() - 1;
-    int c = msrc_cursor;
-    do {
-      c += (direction > 0) ? 1 : -1;
-    } while (c >= 0 && c <= last && ModParamAt(c) == MP_NONE);
-    if (c >= 0 && c <= last) msrc_cursor = c;
+    msrc_cursor = NextStop(msrc_cursor, direction, 2 * ModRowCount(),
+                           [this](int c) { return ModParamAt(c) != MP_NONE; });
     const int row = msrc_cursor / 2;
     if (row < msrc_scroll) msrc_scroll = row;
     while (ModRowY(row) < 0) ++msrc_scroll; // scroll until the row is on screen
     return;
   }
   if (page == PAGE_GLOBALS) {
-    glob_cursor = constrain(glob_cursor + direction, 0, GF_COUNT - 1);
+    glob_cursor = NextStop(glob_cursor, direction, GF_COUNT, [](int) { return true; });
     return;
   }
   if (page < PAGE_CHANNEL_A || page > PAGE_CHANNEL_D) return;
-  cursor = constrain(cursor + direction, 0, FIELD_COUNT - 1);
+  cursor = NextStop(cursor, direction, FIELD_COUNT, [](int) { return true; });
   const int row = kFieldPos[cursor].row;
   if (row < scroll) scroll = row;
   if (row >= scroll + kVisibleRows) scroll = row - kVisibleRows + 1;

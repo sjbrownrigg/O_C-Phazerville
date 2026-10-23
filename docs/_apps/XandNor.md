@@ -155,7 +155,7 @@ A trigger that arrives while the gate is still high briefly drops the gate (240 
 
 ### CV scaling
 
-Each CV row has a depth, from −370% to +370%: 1% steps up to 100%, then 10% steps. 100% is the default. If the steps feel slow, turn on encoder acceleration in the platform's settings. At 100%:
+Each CV row has a depth, from −370% to +370%: 1% steps up to 100%, then 10% steps. 100% is the default. Turning faster moves in bigger steps while the platform's encoder acceleration is on (the default). It is switched in the app menu: press **B** there to turn it on or off; a small marker at the top right shows it is on. At 100%:
 
 | CV target | +5 V gives |
 | --- | --- |

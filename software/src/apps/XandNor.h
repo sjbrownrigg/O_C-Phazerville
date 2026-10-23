@@ -427,16 +427,16 @@ enum OutParam : uint8_t {
 struct OutField { OutParam p; uint8_t x, w; };
 static constexpr int OutputRows(uint8_t fn) { return fn == XandNorDefs::FN_ENV ? 3 : 1; }
 static constexpr OutField OutputField(uint8_t fn, int sub, int col) {
-  return fn < kNumLogicFns ? (col == 0 ? OutField{OP_FN_CV, 40, 24} : col == 1 ? OutField{OP_FN_DEPTH, 70, 30}
+  return fn < kNumLogicFns ? (col == 0 ? OutField{OP_FN_CV, 40, 24} : col == 1 ? OutField{OP_FN_DEPTH, 92, 30}
                                                                     : OutField{OP_NONE, 0, 0})
        : fn == FN_CNT || fn == FN_BIN ? (col == 0 ? OutField{OP_STEP, 40, 24} : OutField{OP_NONE, 0, 0})
        : fn == FN_MOD ? (col == 0 ? OutField{OP_MOD, 40, 24} : OutField{OP_NONE, 0, 0})
-       : fn == FN_SH ? (col == 0 ? OutField{OP_SH_CV, 40, 24} : col == 1 ? OutField{OP_SH_DEPTH, 70, 30}
+       : fn == FN_SH ? (col == 0 ? OutField{OP_SH_CV, 40, 24} : col == 1 ? OutField{OP_SH_DEPTH, 92, 30}
                                                               : OutField{OP_NONE, 0, 0})
        : fn == FN_ENV ? (sub == 0 ? (col == 0 ? OutField{OP_ENV_MODE, 36, 18} : col == 1 ? OutField{OP_ATTACK, 58, 30}
                                                                              : OutField{OP_DECAY, 92, 30})
                        : col == 0 ? OutField{sub == 1 ? OP_ATT_CV : OP_DEC_CV, 40, 24}
-                       : col == 1 ? OutField{sub == 1 ? OP_ATT_DEPTH : OP_DEC_DEPTH, 70, 30}
+                       : col == 1 ? OutField{sub == 1 ? OP_ATT_DEPTH : OP_DEC_DEPTH, 92, 30}
                        : OutField{OP_NONE, 0, 0})
        : OutField{OP_NONE, 0, 0}; // TOGL, LTCH: no settings, so no stop
 }
@@ -2263,11 +2263,12 @@ FLASHMEM void XandNor::DrawOutputs() const {
     int o, sub;
     OutputRowAt(r, o, sub);
     const uint8_t fn = routes[o].fn;
-    if (sub) { // ENV's CV rows, in the same columns as the other outputs' CV
-      gfxPrint(1, y, sub == 1 ? "Att CV" : "Dec CV");
+    if (sub) { // ENV's attack and decay CV: indented to the function column,
+               // with the source and depth in the other outputs' CV columns
+      gfxPrint(10, y, sub == 1 ? "Att" : "Dec");
       const CVInputMap &cv = sub == 1 ? att_cv[o] : dec_cv[o];
       PrintCVName(40, y, cv);
-      PrintDepth(70, y, cv);
+      PrintDepth(92, y, cv);
       continue;
     }
     const char name[2] = { char('A' + o), '\0' };
@@ -2275,7 +2276,7 @@ FLASHMEM void XandNor::DrawOutputs() const {
     gfxPrint(10, y, kFunctionNames[live_fn[o]]); // the function in use
     if (fn < kNumLogicFns) {
       PrintCVName(40, y, fn_cv[o]);
-      PrintDepth(70, y, fn_cv[o]);
+      PrintDepth(92, y, fn_cv[o]); // in line with ENV's decay, using the full width
     } else if (fn == FN_CNT || fn == FN_BIN) {
       gfxPrint(40, y, kStepNames[out_step[o]]);
     } else if (fn == FN_ENV) {
@@ -2289,7 +2290,7 @@ FLASHMEM void XandNor::DrawOutputs() const {
       gfxPrint(out_mod[o] + 1);
     } else if (fn == FN_SH) {
       PrintCVName(40, y, sh_cv[o]);
-      PrintDepth(70, y, sh_cv[o]);
+      PrintDepth(92, y, sh_cv[o]);
     } // TOGL, LTCH: no settings, left blank
   }
   if (rows > kVisibleRows) DrawScrollBar(scroll, rows);

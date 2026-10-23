@@ -2,7 +2,6 @@
 layout: default
 ---
 # (X)AND(N)OR
-{: .no_toc }
 
 > **Hardware: Teensy 4.1 [O.R.N.8](https://www.tlm-audio.com/product-page/oc-4-1-phazerville) required.** To get the best out of it, (X)AND(N)OR is built around the O.R.N.8's more generous I/O: eight outputs (A–H) for its gates, logic and CV functions, and eight CV inputs (1–8), so every channel setting can have its own modulation. It also uses the O.R.N.8's X and Y buttons, its audio applets and its microSD slot for preset banks. It is included only in Teensy 4.1 (T41) builds; 4-output Teensy 4.0 and 3.2 modules have neither the I/O nor the save space for it.
 
@@ -17,10 +16,45 @@ The app also hosts the O.R.N.8's audio applets, has a built-in logic-analyser sc
 Panel labels used here: outputs **A–H**, CV inputs **1–8** (shown on screen as CV 1–CV 8), trigger inputs **TR 1–TR 4**. The Up and Down buttons are labelled **A** and **B** on the O.R.N.8.
 
 ## Contents
-{: .no_toc }
 
-- TOC
-{:toc}
+- [Quick start](#quick-start)
+- [Controls](#controls)
+- [Sources](#sources)
+  - [Trigger sources](#trigger-sources)
+  - [CV sources](#cv-sources)
+- [Overview](#overview)
+- [Channel pages (CH1–CH4)](#channel-pages-ch1ch4)
+  - [CV scaling](#cv-scaling)
+- [Routing](#routing)
+  - [Default patch](#default-patch)
+  - [Reading the logic](#reading-the-logic)
+- [Outputs](#outputs)
+- [CV Mod](#cv-mod)
+  - [Function by CV (outputs A–H)](#function-by-cv-outputs-ah)
+  - [Function CV examples](#function-cv-examples)
+  - [Preset by CV and audio](#preset-by-cv-and-audio)
+- [Mods](#mods)
+  - [Mod examples](#mod-examples)
+- [Audio](#audio)
+- [Scope](#scope)
+- [Presets and banks](#presets-and-banks)
+- [Patch examples](#patch-examples)
+  - [Using BIN](#using-bin)
+  - [Ratchet rolls on demand](#ratchet-rolls-on-demand)
+  - [Off-beats and swing from one clock](#off-beats-and-swing-from-one-clock)
+  - [Driving the audio applets](#driving-the-audio-applets)
+
+## Quick start
+
+The default patch makes music from one clock, so you can hear the app before changing anything.
+
+1. **Clock it.** Patch a steady clock (quarter notes, around 120 BPM) into **TR 1**. On the Overview, the CH1–CH4 boxes flash with every clock.
+2. **Listen.** Patch **A** to a kick or any trigger input: it fires a 10 ms trigger on every clock. Patch **E** to a hi-hat: it fires a short gate just after each clock (the slice between CH1 and CH2). **H** is high in the gap after CH4's 250 ms gate, so it makes a good off-beat gate. The [Default patch](#default-patch) lists all eight.
+3. **Change the logic.** Press **X** for Routing, move to E's function with the left encoder, and turn the right encoder: AND, OR, XNOR and the others each give a different pattern at once.
+4. **Double up.** Press **B** twice from the Overview to reach CH2. Turn the left encoder one step to the divider (next to Source), then turn the right encoder to **x2**. CH2 now fires twice per clock, so B and E play eighth notes.
+5. **Loosen it.** On CH3, set **Prob** to 50%: C now plays only some of the beats.
+6. **Watch it.** Go to the Scope, the last page (from the Overview, press **A** once: the pages wrap round): every channel and output is drawn in time, with no patching.
+7. **Keep it.** Press **Y** (or long-press **A**), choose a slot with the right encoder and press **A** to save. Loading an empty slot brings back the default patch.
 
 ## Controls
 
@@ -37,9 +71,51 @@ The field cursor is a steady underline. On the Audio page the audio engine takes
 
 Pages, in order: **Overview**, **CH1–CH4**, **Routing**, **Outputs**, **CV Mod**, **Mods**, **Audio**, **Scope**. The list wraps, so **A** from Overview goes straight to Scope.
 
+- **Tip:** **X** is the quickest way to try ideas: jump to Routing, change a function, then press **X** again to get back to the page you were on.
+
+## Sources
+
+Every setting that takes a trigger or a CV picks it from a list. The lists are the platform's, with (X)AND(N)OR's own signals added straight after **CV 8**, so they are easy to find.
+
+### Trigger sources
+
+Used by a channel's **Source** and **Reset**, a Mod's **Trig** or **Sync**, **Rst all**, the preset **Load on** trigger and the Scope trigger.
+
+| Source | What it is |
+| --- | --- |
+| **TR 1**–**TR 4** | The trigger inputs |
+| **CV 1**–**CV 8** | The CV inputs used as gates: high above 1.25 V |
+| **CH1>**–**CH4<** | Another channel: **>** fires when its gate starts, **<** when it ends. Only in a channel's Source and Reset, a Mod's Trig or Sync, and Rst all |
+| **OutA**–**OutH** | (X)AND(N)OR's own outputs, read back one tick later |
+| **VrtI**–**VrtP** | The platform's virtual outputs, shared with Quadrants |
+| **M 1**… | The platform's MIDI mappings |
+| **CL1**, **CL4**, **RUN**, **RST** | The platform's clock, which follows Quadrants' clock setup; it doesn't run in this app |
+| **–** | Off |
+
+- **Tip:** a channel source (**CH1>** and so on) is read one tick (60 µs) after that channel's edge. That never matters for sound, but it does for resets: see the **Reset** row on the [channel pages](#channel-pages-ch1ch4).
+
+### CV sources
+
+Used by every CV row in the app: the channel pages, CV Mod, and a Slew's Input.
+
+| Source | What it is |
+| --- | --- |
+| **CV 1**–**CV 8** | The CV input jacks |
+| **Mod1**–**Mod4** | The app's own modulators: LFOs, random voltages, slews and envelopes, set up on the [Mods](#mods) page |
+| **OutA**–**OutH** | (X)AND(N)OR's own outputs, read back one tick later, so one output can modulate a channel or another output with no patch cable. Gate functions give 0 or 5 V, **ENV** 0–5 V, **CNT** / **BIN** their stepped voltage |
+| **VrtI**–**VrtP** | The platform's virtual outputs, shared with Quadrants. Quadrants' clock writes some of them but doesn't run here; some audio applets write CV to them (TuneTracker's detected pitch, for example), which does |
+| **M 1**… | The platform's MIDI CV mappings, set up in its MIDI settings |
+| **G*** | Noise: a new random value on every tick |
+| **–** | Off |
+
+- **Tip:** for modulation with no cables at all, use a **Mod**. An **ENV** output as a CV source (for example H as CH1's Length CV) is the next quickest.
+- The audio applets have their own source list, which includes the outputs (as **#A**–**#H**) but not the Mods or the channel sources.
+
 ## Overview
 
 Boxes for CH1–CH4 and outputs A–H fill while they are high, and the last preset saved or loaded is shown underneath. A small box in the header of each channel page shows that channel's gate in the same way.
+
+- **Tip:** if nothing seems to happen, look here first. No flashing CH boxes means no trigger is reaching the channels; flashing boxes but silent outputs points at the Routing.
 
 ## Channel pages (CH1–CH4)
 
@@ -47,7 +123,7 @@ Each channel turns triggers into gates. The page is a scrolling list:
 
 | Row | Setting |
 | --- | --- |
-| **Source** | The trigger: TR 1–TR 4, a CV input (**CV 1**–**CV 8**), another channel, an output (**OutA**–**OutH**), a virtual output (**VrtI**–**VrtP**), or MIDI. The channels come straight after CV 8 in the list: **CH1>** fires when CH1's gate starts, **CH1<** when it ends, then CH2>, CH2< … CH4<. Next to it, the **divider**: turning right goes x1, x2, x3 … (multiply), turning left /2, /3 … (divide) |
+| **Source** | The trigger: any of the [trigger sources](#trigger-sources), including another channel's start (**CH1>**) or end (**CH1<**). Next to it, the **divider**: turning right goes x1, x2, x3 … (multiply), turning left /2, /3 … (divide) |
 | **Reset** | A trigger that restarts the channel's counting: the next trigger is the first of its division (so /4 lines up with the bar) and the first step of any Euclidean pattern, and triggers waiting in the delay queue are dropped. A gate already running finishes. The same sources as **Source**, including CH1>…CH4<; default off. A channel used as the reset arrives one tick (60 µs) after that channel's edge, so a clock at the same moment has already been counted and the division restarts on the following clock. For a reset that lines up with the clock, use an input |
 | **Length** | Gate length from 1 ms to 10 s, in ten steps per decade. Below 1 ms: **Thru** (the output follows the source while it is high) and **Level** (see below). Above 10 s: **Inf** (high until the next trigger). In Clock mode this row is a percentage instead |
 | **CV** | Length CV input and depth |
@@ -69,7 +145,14 @@ A trigger that arrives while the gate is still high briefly drops the gate (240 
 
 **Level mode.** The channel is high while its source is above the threshold (0.1–6.3 V, default 1.2 V), with 0.2 V of hysteresis so it switches cleanly. With a CV input as the source, an LFO becomes a gate whose width follows the threshold. Delay, probability and ratchets don't apply in Level or Thru.
 
-**CV sources.** Every CV row offers the CV inputs (**CV 1**–**CV 8**), the app's own modulators (**Mod1**–**Mod4**, see [Mods](#mods)) and also the outputs: **OutA**–**OutH** are (X)AND(N)OR's own outputs, read back one tick later, so one output can modulate a channel with no patch cable (for example an **ENV** on H as CH1's Length CV, or a **CNT** output as another channel's Prob CV). **VrtI**–**VrtP** are the platform's virtual outputs, shared with Quadrants: Quadrants' clock writes some of them, which doesn't run here, and some audio applets write CV to them (TuneTracker's detected pitch, for example), which does.
+**Tips**
+
+- **Tempo-proof gates:** set **Len by** to **Clock** at 50% for square waves that follow the clock when it speeds up or slows down. They are ideal for feeding other modules' clock inputs.
+- **Ratchets need room:** ratchets split the gate, so the gate's length sets their speed. Eight ratchets in a 50 ms gate are a buzz; in a 400 ms gate they are a roll. Each pulse needs about 2 ms, so a 10 ms gate fits at most five.
+- **Human feel:** a **Prob** of 70–85% on a hi-hat channel drops the odd hit without sounding random. Lower values suit fills and ghost notes.
+- **Instant pulse-width modulation:** patch an LFO into CV 1, set the Source to **CV 1** and Length to **Level**, then turn **Thresh**: the gate gets wider or narrower.
+- **A free-running clock:** set CH1's Source to its own end (**CH1<**), Length 10 ms and **Delay** 240 ms: a 10 ms pulse every 250 ms with nothing patched, and the Delay CV becomes a tempo control. (With no delay, the gate restarts as soon as it ends, so it is high almost all the time.)
+- **Sample or Track:** use **Sample** when each gate should keep one value, such as random lengths. Use **Track** for long gates that should change while they play, such as a ratchet roll that speeds up.
 
 ### CV scaling
 
@@ -84,6 +167,8 @@ Each CV row has a depth (the platform's attenuverter, −448% to +448%; 100% is 
 | Divider | +10 steps towards multiply (2 steps per volt) |
 
 Negative depth, or negative voltage, moves the other way. Length is held within 1 ms – 10 s; CV can open a delay from Off and close it again.
+
+- **Tip:** CV adds to the setting on the page, so set the page value to where the modulation should start. For example, set **Prob** to 0% and let the CV bring the channel in.
 
 ## Routing
 
@@ -111,12 +196,29 @@ A fresh install and empty preset slots start here. All four channels take TR 1, 
 | G | XOR 3 4 | 100–250 ms |
 | H | NOT 4 | from 250 ms until the next clock |
 
+### Reading the logic
+
+A quick guide to what each function does with rhythms:
+
+- **XOR** of two nested gates (one inside the other) gives the slice between them: the default patch's E–G. Change one channel's Length to move the slice.
+- **AND** fires only where two rhythms coincide. With CH1 at /3 and CH2 at /4 (short gates), **AND 1 2** hits once every 12 clocks: an accent for a three-against-four pattern.
+- **OR** merges two rhythms into one, but overlapping gates merge into one long gate. To keep every hit separate, keep both lengths short (10 ms is a good start).
+- **NOT** fills the gaps: a long gate's inverse is an off-beat, as on H.
+- **NAND**, **NOR** and **XNOR** are the inverses of AND, OR and XOR. Use them when you want the gaps rather than the hits.
+- **TOGL** divides by two and alternates: high for one trigger, low for the next. It is useful for left/right or A/B switching.
+- **LTCH** turns two rhythms into one gate: it opens on the first channel and closes on the second. For example, a gate from the bar line (CH1 at /4) to a later hit (CH2 with a delay).
+
 ## Outputs
 
 Settings for the functions that need them, one row per output; rows with none show "–".
 
 - **CNT / BIN:** step size **Semi** (a semitone, for pitch), **1/3V** or **1V**.
 - **ENV:** mode **AD** (each rising edge runs attack then decay, whatever the gate length) or **ASR** (attack, hold while the gate is high, then release), with attack (default 2 ms) and decay or release (default 200 ms) on the 1 ms – 10 s scale.
+
+**Tips**
+
+- **A stepped accent:** in the default patch, set H to **CNT** with **1/3V** steps. Each clock it steps down 1.33, 1, 0.67, 0.33 V as the channels end one by one: a stepped decay for a VCA or an accent input.
+- **AD or ASR:** **AD** ignores the gate length, so it suits short triggers and percussion. **ASR** follows the gate, so the channel's Length becomes the note length, and Length CV then shapes the envelope as well.
 
 ## CV Mod
 
@@ -139,27 +241,15 @@ The CV moves the function on from the one set on the Routing page, through the e
 - The output keeps the channels set on the Routing page. A one-channel function (OUT, NOT) reads the first; a two-channel function reads both, so set both channels on Routing if the CV can reach the two-input functions.
 - Outputs set to **TOGL**, **LTCH**, **CNT**, **BIN** or **ENV** aren't affected: they keep state, so switching them by CV wouldn't behave predictably.
 - Several outputs can share one CV source, each with its own depth.
-
-### CV sources
-
-Every CV row in the app (here and on the channel pages) offers the same sources:
-
-| Source | What it is |
-| --- | --- |
-| **CV 1**–**CV 8** | The CV input jacks |
-| **Mod1**–**Mod4** | The app's own modulators: LFOs, random voltages, slews and envelopes, set up on the [Mods](#mods) page |
-| **OutA**–**OutH** | (X)AND(N)OR's own outputs, read back one tick later, so one output can modulate another with no patch cable. Gate functions give 0 or 5 V, **ENV** 0–5 V, **CNT** / **BIN** their stepped voltage |
-| **VrtI**–**VrtP** | The platform's virtual outputs, shared with Quadrants. Quadrants' clock writes some of them but doesn't run here; some audio applets write CV to them (TuneTracker's detected pitch, for example) |
-| **M 1**… | The platform's MIDI CV mappings, set up in its MIDI settings |
-| **G*** | Noise: a new random value on every tick |
-| **–** | Off |
+- The sources are the usual [CV sources](#cv-sources).
 
 **Depth for gate sources.** A gate output is 0 or 5 V, so at 100% it jumps all the way to XNOR. To step one function per gate, set the depth to about **13%**; two functions need about **25%**. The depth readout shows the percentage actually applied.
 
-### Examples
+### Function CV examples
 
 - **Flip a logic output with a gate:** set E to **AND 1 2** on Routing, then give E the source **OutH** at about 13%. While H is high, E becomes **NAND**, its exact inverse.
 - **A function sequencer:** give output F a slow stepped random voltage, or a **BIN** output at **1/3V** steps from this app, at 100% depth. F then walks through the logic functions as the voltage changes, while the Overview and Scope show the result.
+- **No cables:** set F to **AND 2 3** on Routing, then give it the source **Mod2** (Rand) at about 40% depth. Every 500 ms a new random value picks a function a few steps either side of AND, so the pattern changes by itself.
 - **Feedback:** an output modulating its own function (A with source **OutA**) can lock up or oscillate depending on its channels. It's unpredictable, which can be the point.
 
 ### Preset by CV and audio
@@ -169,6 +259,9 @@ Every CV row in the app (here and on the channel pages) offers the same sources:
 - **Audio:** whether loading a preset also loads its audio setup (default On).
 
 These settings are global: loading a slot doesn't change them.
+
+- **Tip:** to play a song from presets, save each section in its own slot, leave **Preset** off and set **Load on** to a trigger that fires once per section (a channel at /16, for example). Each trigger moves on to the next saved slot.
+- **Tip:** set **Audio** to Off to change rhythms with a preset load while the sound stays the same.
 
 ## Mods
 
@@ -188,9 +281,15 @@ Four internal modulators, **Mod1**–**Mod4**, that any CV row can use: pick the
 - The CV row's own depth still applies, so one Mod can drive several targets by different amounts, or inverted.
 - To see a Mod, set a Scope trace to **M1**–**M4**.
 
-**Rst all.** The last row of the page is the global reset: a trigger that resets every channel (as each channel's own **Reset** does), restarts every LFO and every Rand's own clock, and clears TOGL and LTCH outputs. Like the preset trigger, it is global: loading a preset doesn't change it. Send it the same pulse as your sequencer's reset to bring dividers, Euclidean patterns and LFOs back in line together.
+**Rst all.** The last row of the page is the global reset: a trigger that resets every channel (as each channel's own **Reset** does), restarts every LFO and every Rand's own clock, and clears TOGL and LTCH outputs. Like the preset trigger, it is global: loading a preset doesn't change it. Send it the same pulse as your sequencer's reset to bring dividers, Euclidean patterns and LFOs back in line together. A channel used as **Rst all** arrives one tick late, as with a channel's own Reset, so use an input for a reset that lines up with the clock.
 
-### Examples
+**Tips**
+
+- **Hear a Mod at once:** the defaults are ready to use. Set any CV row's source to **Mod1** for a 1 s sine wave, or to **Mod2** for a new random value every 500 ms.
+- **Which polarity:** use **Bi** for wobble around the setting on the page, and **Uni+** or **Uni-** when the modulation should only add or only take away (a delay that should never go below the setting, for example).
+- **Smooth random:** a **Rand** with **Glide** about the same as its Period wanders smoothly instead of jumping.
+
+### Mod examples
 
 - **Swing that breathes:** give CH2's Delay CV **Mod1** (a slow LFO, set to **Uni+**) at a low depth, so CH2 drifts late and back.
 - **Random gate lengths:** set CH1's Length CV to **Mod2**, with Mod2's **Trig** on the same input as CH1's Source (TR 1): the Mods update before the channels, so each gate starts with a fresh random length.
@@ -207,6 +306,8 @@ On this page all short presses of A, B, X and Y and both encoders go to the audi
 The audio setup is shared with Quadrants: changes made in either app appear in the other.
 
 The audio applets can take their triggers and CVs from (X)AND(N)OR's outputs with no patching: see [Driving the audio applets](#driving-the-audio-applets).
+
+- **Tip:** the applets already play at full level and there is no master volume. If a drum sounds too quiet, add **Dynamics** in the next slot and raise its makeup gain; a **VCA** above 0 dB also adds gain, with clipping once past full scale.
 
 ## Scope
 
@@ -228,6 +329,13 @@ The selected trace's label is inverted. Scope settings aren't saved with presets
 
 **Screensaver.** The scope keeps capturing on every page and is the app's screensaver: the same mode and zoom, without labels or status line, across the full width. How long the module waits is the platform's **Screen Blank** setting in the Setup/About calibration routine.
 
+**Tips**
+
+- **A still picture of a pattern:** use **Trig** mode with the trigger on your bar or reset pulse (a channel at /4, for example): every sweep starts in the same place, so changes stand out.
+- **Compare two signals closely:** press the left encoder twice for two large traces, then move the cursor to choose which two.
+- **Count ratchets or check timing:** press the right encoder to freeze the display.
+- **Pk or Sm:** at slow timebases **Pk** draws even a 1 ms trigger a whole column wide, so every hit shows but pulse widths look longer than they are. Use a faster timebase or **Sm** to judge widths.
+
 ## Presets and banks
 
 Long-press **A** or press **Y** to open the preset overlay: 100 banks of 8 slots.
@@ -247,7 +355,13 @@ Slots holding a patch carry a dot; the active slot is framed twice. The footer b
 - **Audio in presets.** Saving a slot also stores the audio applet setup; loading applies it unless **Audio** is Off on the CV Mod page. Slots saved before this existed have no audio setup and leave audio alone.
 - **The working patch.** Your current settings and bank number are kept with the platform's normal app save: long-press the right encoder on (X)AND(N)OR in the app menu. Preset slots are saved to their files at once when you press A.
 
-## Examples
+**Tips**
+
+- **Before switching off:** save to a slot with **A**. That is written at once; the working patch is only kept if you also do the app-menu save.
+- **Variations:** save a patch, change one thing, and save it in the next slot. Pressing **B** on each in turn is a quick A/B comparison, and **Load on** can then step through them in time.
+- **One bank per project:** banks load as soon as you turn the left encoder, so a bank per song or performance keeps its slots together.
+
+## Patch examples
 
 ### Using BIN
 
@@ -277,6 +391,8 @@ Set an output to **BIN** with step **1/3V**. The channels now count like the dig
 
 Use it as a stepped sweep for a filter cutoff, or with **Semi** steps into a VCO for a descending chromatic run. Clock-relative length needs two clocks to measure the tempo, so the very first step may be off.
 
+- **Tip:** give all four channels the same **Reset** input (or use **Rst all**) and the staircase always starts from the top on the bar.
+
 #### A generative melody
 
 Odd dividers make the channels drift in and out of phase with each other:
@@ -296,9 +412,13 @@ Each clock produces a note from the current combination of high channels, and th
 
 Set CH2 to TR 1 with a length of about 80% of the clock period (or **Len by: Clock** at 80%), **Ratchet** 1, and patch a slow LFO or a stepped random voltage into CV 2 with CH2's Ratchet **CV** set to input 2. As the voltage rises, each gate splits into 2, 3 … up to 8 pulses: drum rolls that come and go. With **CV mode: Track**, the roll changes speed within a single gate.
 
+- **Tip:** with no LFO to hand, set the Ratchet **CV** to **Mod2** (Rand) instead: rolls come and go at random.
+
 ### Off-beats and swing from one clock
 
 With the default patch running, set CH2 to **x1**, **Delay** to half the clock period, and its Length to 10 ms: output B now fires on the off-beat. Patch a slow LFO into CH2's Delay **CV** for a moving swing feel, and route **E** to **OR 1 2** for a combined on-and-off-beat pattern.
+
+- **Tip:** the delay is a time, so it stays put if the tempo changes. Re-set it to half the new clock period after a tempo change.
 
 ### Driving the audio applets
 

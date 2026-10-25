@@ -60,7 +60,7 @@ The default patch makes music from one clock, so you can hear the app before cha
 | Control | Action |
 | --- | --- |
 | **A** / **B** | Previous / next page |
-| Left encoder turn | Move the cursor between fields (pages with long lists scroll to follow). Past the last field it wraps round to the first, and back, on every page except Mods |
+| Left encoder turn | Move the cursor between fields (pages with long lists scroll to follow). Past the last field it wraps round to the first, and back, on Routing, Outputs, Global and Scope; the channel pages and Mods stop at the ends |
 | Right encoder turn | Change the selected value directly; there is no press to start editing |
 | Long-press **A**, or **Y** | Open or close the preset overlay |
 | **X** | Jump to the Routing page; press again to go back |

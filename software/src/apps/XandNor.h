@@ -2594,8 +2594,8 @@ static int NextStop(int c, int direction, int count, Valid valid, bool wrap = tr
 
 // Left encoder: the cursor. It wraps from the last field to the first and
 // back on the pages that fit one screen or keep fixed columns (Routing,
-// Outputs, Global, Scope) and the channel pages; on the Mods page, whose rows
-// change with each Mod's type, it stops at the ends so you keep your place.
+// Outputs, Global, Scope). On the long scrolling lists (the channel pages and
+// Mods) it stops at the ends, so you keep your place.
 FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
   using namespace XandNorDefs;
   if (preset_mode) { // left encoder: bank (loads it at once)
@@ -2658,7 +2658,7 @@ FLASHMEM void XandNor::OnLeftEncoderMove(int direction) {
     return;
   }
   if (page < PAGE_CHANNEL_A || page > PAGE_CHANNEL_D) return;
-  cursor = NextStop(cursor, direction, FIELD_COUNT, [](int) { return true; });
+  cursor = NextStop(cursor, direction, FIELD_COUNT, [](int) { return true; }, false);
   const int row = kFieldPos[cursor].row;
   if (row < scroll) scroll = row;
   if (row >= scroll + kVisibleRows) scroll = row - kVisibleRows + 1;

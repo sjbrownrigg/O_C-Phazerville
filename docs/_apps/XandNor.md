@@ -28,6 +28,7 @@ Panel labels used here: outputs **A–H**, CV inputs **1–8** (shown on screen 
 - [Routing](#routing)
   - [Default patch](#default-patch)
   - [Reading the logic](#reading-the-logic)
+  - [Inputs and outputs in the logic](#inputs-and-outputs-in-the-logic)
 - [Outputs](#outputs)
   - [Function by CV](#function-by-cv)
   - [Function CV examples](#function-cv-examples)
@@ -171,19 +172,30 @@ Negative depth, or negative voltage, moves the other way. Length is held within 
 
 ## Routing
 
-Each output takes a function and one or two channels. Turn the left encoder through function, first channel and second channel; the cursor skips fields a function doesn't use. The output letter is highlighted while the output is high.
+Each output takes a function and one or two inputs, shown under **In**. Turn the left encoder through function, first input and second input; the cursor skips fields a function doesn't use. The output letter is highlighted while the output is high.
 
 | Function | Reads | Output |
 | --- | --- | --- |
-| OUT / NOT | one channel | its gate, or the inverse |
-| AND, NAND, OR, NOR, XOR, XNOR | two channels | the logic combination |
-| TOGL | one channel | flips on each rising edge (divides by two) |
-| LTCH | two channels | set by the first, reset by the second; simultaneous edges are ignored |
-| CNT | all four | stepped CV: how many channels are high (0–4) |
-| BIN | all four | stepped CV: CH1 + 2×CH2 + 4×CH3 + 8×CH4 (0–15) |
-| ENV | one channel | 0–5 V envelope |
+| OUT / NOT | one input | its gate, or the inverse |
+| AND, NAND, OR, NOR, XOR, XNOR | two inputs | the logic combination |
+| TOGL | one input | flips on each rising edge (divides by two) |
+| LTCH | two inputs | set by the first, reset by the second; simultaneous edges are ignored |
+| CNT | all four channels | stepped CV: how many channels are high (0–4) |
+| BIN | all four channels | stepped CV: CH1 + 2×CH2 + 4×CH3 + 8×CH4 (0–15) |
+| ENV | one input | 0–5 V envelope |
 | MOD | none | a Mod's voltage (Mod1–Mod4, chosen on Outputs) |
-| S&H | one channel | a CV sampled each time the channel starts |
+| S&H | one input | a CV sampled each time the input goes high |
+
+An input can be any of these. Turning the right encoder steps through them in this order:
+
+| Shown | What it reads |
+| --- | --- |
+| **1**–**4** | The channels CH1–CH4, with everything the channel pages set: divider, length, delay, probability, ratchets |
+| **T1**–**T4** | The trigger inputs TR 1–TR 4, directly |
+| **V1**–**V8** | The CV inputs CV 1–CV 8 as gates, directly: high above 1.25 V |
+| **A**–**H** | Another output's state (CV outputs count as high above 1.25 V) |
+
+The direct inputs skip a channel's processing entirely. A 1 ms trigger on TR 2 stays a 1 ms trigger, so AND with it gives a 1 ms pulse. For anything with a shape (a length, a division, a chance), use a channel.
 
 ### Default patch
 
@@ -208,6 +220,20 @@ A quick guide to what each function does with rhythms:
 - **NAND**, **NOR** and **XNOR** are the inverses of AND, OR and XOR. Use them when you want the gaps rather than the hits.
 - **TOGL** divides by two and alternates: high for one trigger, low for the next. It is useful for left/right or A/B switching.
 - **LTCH** turns two rhythms into one gate: it opens on the first channel and closes on the second. For example, a gate from the bar line (CH1 at /4) to a later hit (CH2 with a delay).
+
+### Inputs and outputs in the logic
+
+Reading the jacks and other outputs directly keeps all four channels free for rhythm, and lets logic go deeper than two inputs.
+
+- **A hand mute:** set E to **AND 1 T2**. CH1's rhythm comes through E only while a gate is held on TR 2: a button, a sequencer's mute lane, or a long gate from another module.
+- **A latching mute from one button:** set G to **TOGL T3**, then E to **AND 1 G**. Each press on TR 3 switches CH1's rhythm on E on or off.
+- **Run and stop:** **LTCH T1 T2** goes high on a trigger at TR 1 and low on one at TR 2. Use it as the second input of an AND to start and stop any rhythm.
+- **Three-way coincidence:** with CH1 at /3, CH2 at /4 and CH3 at /5 (short gates), set E to **AND 1 2** and F to **AND E 3**. F fires only when all three land together: once every 60 clocks.
+- **Add an external rhythm:** **OR 2 T3** merges another sequencer's triggers on TR 3 with CH2's rhythm on one output.
+- **An LFO as a window:** patch an LFO into CV 1 and set E to **AND 1 V1**. CH1's hits come through only while the LFO is above 1.25 V, so the rhythm breathes in and out.
+- **Envelopes and S&H from a jack:** **ENV T4** is an envelope triggered straight from TR 4; **S&H T2** samples its CV (set on Outputs) on each TR 2 trigger, with no channel used.
+
+**Order and feedback.** Outputs are worked out A to H on every tick. An output reading an earlier one (F reading E) sees it in the same tick; reading a later one (E reading G) sees it one tick (60 µs) later, which you won't hear. An output reading itself oscillates: **NAND H 1** on H buzzes at about 8.3 kHz while CH1 is high, and stays high otherwise. Two outputs reading each other can lock or oscillate too. Avoid that, or use it on purpose.
 
 ## Outputs
 

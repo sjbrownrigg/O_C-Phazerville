@@ -80,8 +80,18 @@ static const char * const kFunctionNames[FN_COUNT] = {
 
 struct Route {
   uint8_t fn;
-  uint8_t a, b; // channel indices; b unused by OUT and NOT
+  uint8_t a, b; // operands (see below); b unused by one-input functions
 };
+
+// Logic operands (M13): the four channels, then the inputs and outputs read
+// directly, with none of a channel's processing. Shown 1-4, T1-T4, V1-V8, A-H.
+// A CV input is high above the platform's 1.25 V gate threshold. Outputs are
+// worked out A to H, so an earlier output reads this tick's state and a later
+// one (or the output itself) last tick's.
+static constexpr int kOperandTR = kNumChannels;                  // TR 1-4
+static constexpr int kOperandCV = kOperandTR + DIGITAL_INPUT_COUNT; // CV 1-8
+static constexpr int kOperandOut = kOperandCV + ADC_CHANNEL_COUNT;  // outputs A-H
+static constexpr int kNumOperands = kOperandOut + DAC_CHANNEL_COUNT;
 
 // Default patch: every channel on T1 with a different length, so one clock fans
 // out into nested gates (outputs A-D) and the slices between them (E-H).
@@ -503,7 +513,7 @@ public:
 
     for (int o = 0; o < kNumOutputs; ++o) {
       const Route &r = routes[o];
-      const bool a = gate[r.a], b = gate[r.b];
+      const bool a = Operand(r.a, gate), b = Operand(r.b, gate);
       const bool rise_a = a && !prev_a[o], rise_b = b && !prev_b[o];
       prev_a[o] = a;
       prev_b[o] = b;
@@ -571,6 +581,16 @@ public:
   }
 
   void View() const;
+
+  // A logic operand's state this tick: a channel's gate, an input's gate, or
+  // an output as worked out so far (see kOperandTR).
+  bool Operand(uint8_t k, const bool *gate) const {
+    using namespace XandNorDefs;
+    if (k < kOperandTR) return gate[k];
+    if (k < kOperandCV) return HS::frame.gate_high[k - kOperandTR];
+    if (k < kOperandOut) return HS::frame.gate_high[DIGITAL_INPUT_COUNT + k - kOperandCV];
+    return out_high[k - kOperandOut];
+  }
 
   void OnUpButtonPress();
   void OnUpButtonLongPress();
@@ -1499,8 +1519,8 @@ FLASHMEM void XandNor::UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_
   for (int o = 0; o < 8; ++o) {
     Route r = p.routes[o];
     r.fn = constrain(r.fn, 0, FN_COUNT - 1);
-    r.a = constrain(r.a, 0, kNumChannels - 1);
-    r.b = constrain(r.b, 0, kNumChannels - 1);
+    r.a = constrain(r.a, 0, kNumOperands - 1);
+    r.b = constrain(r.b, 0, kNumOperands - 1);
     routes[o] = r;
   }
 }
@@ -2464,14 +2484,32 @@ FLASHMEM void XandNor::DrawGlobal() const {
   DrawFieldCursor(f.x - 1, 13 + f.row * 9 + 8, f.w);
 }
 
-// Draws "FN a b" from x, e.g. "XOR 3 4" for CH3 XOR CH4. Only channel numbers
-// fit in half the screen; the function gets a 4-character column so the
-// operands line up down the page.
+// An operand in two characters at most: "3" for CH3, "T2", "V5", or "E" for
+// output E.
+FLASHMEM static void PrintOperand(int x, int y, uint8_t k) {
+  using namespace XandNorDefs;
+  if (k < kOperandTR) {
+    gfxPrint(x, y, k + 1);
+  } else if (k < kOperandCV) {
+    gfxPrint(x, y, "T");
+    gfxPrint(k - kOperandTR + 1);
+  } else if (k < kOperandOut) {
+    gfxPrint(x, y, "V");
+    gfxPrint(k - kOperandCV + 1);
+  } else {
+    const char name[2] = { char('A' + k - kOperandOut), '\0' };
+    gfxPrint(x, y, name);
+  }
+}
+
+// Draws "FN a b" from x, e.g. "XOR 3 4" for CH3 XOR CH4, or "AND 1 T2". The
+// function gets a 4-character column and each operand two, so they line up
+// down the page in half the screen.
 FLASHMEM void XandNor::PrintRoute(int x, int y, const XandNorDefs::Route &r) const {
   using namespace XandNorDefs;
   gfxPrint(x, y, kFunctionNames[r.fn]);
-  if (UsesA(r.fn)) gfxPrint(x + 28, y, r.a + 1);
-  if (TwoInputs(r.fn)) gfxPrint(x + 40, y, r.b + 1);
+  if (UsesA(r.fn)) PrintOperand(x + 28, y, r.a);
+  if (TwoInputs(r.fn)) PrintOperand(x + 42, y, r.b);
 }
 
 FLASHMEM void XandNor::DrawRouting() const {
@@ -2481,8 +2519,8 @@ FLASHMEM void XandNor::DrawRouting() const {
   for (int col = 0; col * 4 < kNumOutputs; ++col) {
     const int x = col * 64 + 1;
     gfxPrint(x + 8, 13, "Fn");
-    gfxPrint(x + 36, 13, "Ch");
-    gfxDottedLine(x, 20, x + 55, 20);
+    gfxPrint(x + 36, 13, "In"); // operands: channels, inputs, outputs
+    gfxDottedLine(x, 20, x + 61, 20);
   }
   for (int o = 0; o < kNumOutputs; ++o) {
     const int x = (o / 4) * 64 + 1;
@@ -2499,8 +2537,8 @@ FLASHMEM void XandNor::DrawRouting() const {
   const int y = 22 + (o % 4) * 9 + 8;
   switch (route_cursor % ROUTE_FIELDS) {
     case ROUTE_FN: DrawFieldCursor(x + 8, y, 25); break;
-    case ROUTE_A:  DrawFieldCursor(x + 36, y, 6); break;
-    default:       DrawFieldCursor(x + 48, y, 6); break;
+    case ROUTE_A:  DrawFieldCursor(x + 36, y, 12); break;
+    default:       DrawFieldCursor(x + 50, y, 12); break;
   }
 }
 
@@ -2774,10 +2812,10 @@ FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
         r.fn = constrain(r.fn + direction, 0, FN_COUNT - 1);
         break;
       case ROUTE_A:
-        r.a = constrain(r.a + direction, 0, kNumChannels - 1);
+        r.a = constrain(r.a + direction, 0, kNumOperands - 1);
         break;
       default:
-        r.b = constrain(r.b + direction, 0, kNumChannels - 1);
+        r.b = constrain(r.b + direction, 0, kNumOperands - 1);
         break;
     }
     return;

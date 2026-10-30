@@ -35,6 +35,11 @@
 // share the same audio setup.
 #if defined(ARDUINO_TEENSY41) && !defined(NO_HEMISPHERE)
 #define XANDNOR_AUDIO 1
+// The platform's clock (M14), as Quadrants and Calibr8or host it: tempo,
+// transport, shuffle, sync to TR 1 or MIDI clock, and the CL1/CL4/RUN/RST
+// trigger sources.
+#define XANDNOR_CLOCK 1
+#include "../applets/ClockSetupT4.h"
 #endif
 
 namespace XandNorDefs {
@@ -158,10 +163,12 @@ static constexpr int kChannelRows = 13;
 // Global page: the settings a preset load leaves alone. The reset of every
 // channel, then the preset CV, its load trigger, and whether loads include audio.
 enum GlobalField {
+  GF_CLOCK_BPM, GF_CLOCK_RUN, // the platform clock's tempo and transport
   GF_RESET, GF_PRESET_CV, GF_PRESET_DEPTH, GF_LOAD, GF_AUDIO, GF_COUNT
 };
 static constexpr FieldPos kGlobalPos[GF_COUNT] = {
-  {0, 52, 24}, {1, 52, 24}, {1, 88, 30}, {2, 52, 24}, {3, 52, 18},
+  {0, 52, 30}, {0, 94, 24},
+  {1, 52, 24}, {2, 52, 24}, {2, 88, 30}, {3, 52, 24}, {4, 52, 18},
 };
 static constexpr int kVisibleRows = 5;
 static const char * const kRowLabels[kChannelRows] = {
@@ -372,7 +379,11 @@ struct PackedPatch {
   // bytes, low first (byte arrays: the offset here is odd).
   uint8_t env_cv[8][2][2];
   uint8_t depth_scale;   // 1 = CV depths on DepthTenths()' scale; 0 = the platform's
-  uint8_t v4_reserved[20];
+  // M14, global: the platform clock's settings (ClockSetup::OnDataRequest(),
+  // low byte first) and flags: bit 0 set, bit 1 running.
+  uint8_t clock_data[8];
+  uint8_t clock_flags;
+  uint8_t v4_reserved[11];
 };
 static_assert(sizeof(PackedPatch) == 384, "PackedPatch layout changed");
 static constexpr size_t kPatchV2Size = 128; // the patch before ext existed
@@ -479,10 +490,17 @@ public:
   OC_APP_INTERFACE_DECLARE(XandNor, XandNorDefs::kStorageSize);
 
   void Start();
-  void Resume() {}
+  void Resume();
+  void Suspend();
+  void ClockRunStop();
+  void ClockPause();
 
   void Controller() {
     using namespace XandNorDefs;
+#ifdef XANDNOR_CLOCK
+    // The platform clock first, so CL1/CL4 triggers land on this tick.
+    ClockSetup_instance.Controller();
+#endif
     bool gate[kNumChannels];
     // Last tick's channel edges, so channel sources see every channel alike
     // (one tick, 60 us, later) whatever the processing order.
@@ -639,6 +657,14 @@ private:
   CVInputMap preset_cv;
   DigitalInputMap preset_trig;
   bool preset_audio = true; // preset loads include the audio setup (global)
+  // Platform clock (M14): the setup overlay, opened with A+B or from Global;
+  // the A and B releases that follow A+B are swallowed so they don't turn the
+  // page. clock_store holds this app's clock settings between app switches.
+  bool clock_overlay = false;
+  uint8_t ab_swallow = 0;
+  uint32_t ab_swallow_until = 0;
+  uint64_t clock_store = 0;
+  uint8_t clock_store_flags = 0; // as PackedPatch::clock_flags
   volatile bool audio_busy = false; // main loop is changing the audio setup
   volatile int8_t pending_slot = -1; // set by Controller(), loaded by Loop(); -2 = next
   XandNorDefs::Route routes[8];
@@ -1179,6 +1205,8 @@ private:
   void DrawArrow(int x, int y) const;
   void PrintRoute(int x, int y, const XandNorDefs::Route &r) const;
   void DrawPresets() const;
+  void DrawPage() const;
+  void DrawClockIcon() const;
 
   void LoadDefaults();
   void LoadDefaultMods();
@@ -1420,6 +1448,11 @@ FLASHMEM void XandNor::PackPatch(XandNorDefs::PackedPatch &p) const {
   }
   p.mods_set = 1;
   p.depth_scale = 1;
+#ifdef XANDNOR_CLOCK
+  const uint64_t clk = ClockSetup_instance.OnDataRequest();
+  for (int i = 0; i < 8; ++i) p.clock_data[i] = uint8_t(clk >> (8 * i));
+  p.clock_flags = 1 | ((HS::clock_m.IsRunning() || HS::clock_m.IsPaused()) ? 2 : 0);
+#endif
   for (int ch = 0; ch < kNumChannels; ++ch) {
     p.reset_trig[ch] = reset_trig[ch].Pack() & 0xff;
     p.reset_chan[ch] = reset_chan[ch];
@@ -1509,6 +1542,10 @@ FLASHMEM void XandNor::UnpackPatch(const XandNorDefs::PackedPatch &p, bool with_
     }
   }
   if (with_global) {
+    // The clock applies when the app resumes (see Resume()).
+    clock_store = 0;
+    for (int i = 0; i < 8; ++i) clock_store |= uint64_t(p.clock_data[i]) << (8 * i);
+    clock_store_flags = p.clock_flags;
     UnpackTrig(global_reset, global_chan, p.global_reset, p.global_chan);
     UnpackCV(preset_cv, p.preset_cv, old_depths);
     DigitalInputMap t{}; // value-initialised: see LoadDefaults()
@@ -1862,6 +1899,13 @@ FLASHMEM void XandNor::SelectBank(int b) {
 // -- UI ----------------------------------------------------------------------
 
 FLASHMEM void XandNor::View() const {
+  DrawPage();
+#ifdef XANDNOR_CLOCK
+  if (clock_overlay) ClockSetup_instance.View(); // drawn over the page
+#endif
+}
+
+FLASHMEM void XandNor::DrawPage() const {
   using namespace XandNorDefs;
   if (preset_mode) {
     DrawPresets();
@@ -1879,6 +1923,7 @@ FLASHMEM void XandNor::View() const {
   }
   gfxHeader("(X)AND(N)OR");
   gfxPrint(128 - 6 * (int)strlen(kPageNames[page]) - 1, 1, kPageNames[page]);
+  DrawClockIcon();
 
   switch (page) {
     case PAGE_OVERVIEW: DrawOverview(); break;
@@ -1889,6 +1934,15 @@ FLASHMEM void XandNor::View() const {
     default:            DrawChannelPage(page - PAGE_CHANNEL_A); break;
   }
   DrawPageDots();
+}
+
+// In the header, between the title and the page name: a metronome while the
+// platform clock runs, a pause sign while it waits for sync.
+FLASHMEM void XandNor::DrawClockIcon() const {
+#ifdef XANDNOR_CLOCK
+  if (HS::clock_m.IsPaused()) gfxIcon(70, 1, PAUSE_ICON);
+  else if (HS::clock_m.IsRunning()) gfxIcon(70, 1, HS::clock_m.Cycle() ? METRO_L_ICON : METRO_R_ICON);
+#endif
 }
 
 FLASHMEM void XandNor::DrawOverview() const {
@@ -2469,17 +2523,27 @@ FLASHMEM void XandNor::DrawModSources() const {
 // Global page: the settings a preset load leaves alone.
 FLASHMEM void XandNor::DrawGlobal() const {
   using namespace XandNorDefs;
-  gfxPrint(1, 13, "Rst all:");
-  PrintTrigName(52, 13, global_reset, global_chan);
-  gfxPrint(1, 22, "Preset:");
-  PrintCVName(52, 22, preset_cv);
-  PrintDepth(88, 22, preset_cv);
-  gfxPrint(1, 31, "Load on:");
-  PrintInputName(52, 31, preset_trig.InputName());
+  // The platform clock: tempo and Run/Stop here; press an encoder on this row
+  // (or A+B anywhere) for its full setup.
+  gfxPrint(1, 13, "Clock:");
+#ifdef XANDNOR_CLOCK
+  gfxPrint(52, 13, HS::clock_m.GetTempo());
+  gfxPrint("bpm");
+  gfxPrint(94, 13, HS::clock_m.IsRunning() ? "Run" : HS::clock_m.IsPaused() ? "Wait" : "Stop");
+#else
+  gfxPrint(52, 13, "-");
+#endif
+  gfxPrint(1, 22, "Rst all:");
+  PrintTrigName(52, 22, global_reset, global_chan);
+  gfxPrint(1, 31, "Preset:");
+  PrintCVName(52, 31, preset_cv);
+  PrintDepth(88, 31, preset_cv);
+  gfxPrint(1, 40, "Load on:");
+  PrintInputName(52, 40, preset_trig.InputName());
   // With no preset CV, each trigger steps to the next used slot.
-  if (!preset_cv.enabled() && (preset_trig.Pack() & 0xff)) gfxPrint(76, 31, "next");
-  gfxPrint(1, 40, "Audio:"); // preset loads include the audio setup
-  gfxPrint(52, 40, preset_audio ? "On" : "Off");
+  if (!preset_cv.enabled() && (preset_trig.Pack() & 0xff)) gfxPrint(76, 40, "next");
+  gfxPrint(1, 49, "Audio:"); // preset loads include the audio setup
+  gfxPrint(52, 49, preset_audio ? "On" : "Off");
   const FieldPos &f = kGlobalPos[glob_cursor];
   DrawFieldCursor(f.x - 1, 13 + f.row * 9 + 8, f.w);
 }
@@ -2551,6 +2615,7 @@ FLASHMEM void XandNor::DrawPresets() const {
   // for two digits, so the text doesn't move between 9 and 10.
   gfxPrint(128 - 6 * 8 - 1, 1, "Bank# ");
   gfxPrint(bank);
+  DrawClockIcon();
   for (int i = 0; i < kNumSlots; ++i) {
     const int x = 4 + (i % 4) * 31;
     const int y = 15 + (i / 4) * 17;
@@ -2793,6 +2858,14 @@ FLASHMEM void XandNor::OnRightEncoderMove(int direction) {
   }
   if (page == PAGE_GLOBALS && !preset_mode) {
     switch (glob_cursor) {
+#ifdef XANDNOR_CLOCK
+      case GF_CLOCK_BPM:
+        HS::clock_m.SetTempoBPM(HS::clock_m.GetTempo() + direction);
+        break;
+      case GF_CLOCK_RUN: // right runs, left stops
+        if ((direction > 0) != (HS::clock_m.IsRunning() || HS::clock_m.IsPaused())) ClockRunStop();
+        break;
+#endif
       case GF_RESET:        ChangeTrigSource(global_reset, global_chan, direction); break;
       case GF_PRESET_CV:    ChangeCVSource(preset_cv, direction); break;
       case GF_PRESET_DEPTH: AdjustDepth(preset_cv, direction); break;
@@ -2996,6 +3069,54 @@ FLASHMEM size_t XandNor::RestoreAppData(util::StreamBufferReader &stream_buffer)
 
 FLASHMEM void XandNor::HandleAppEvent(OC::AppEvent event) {
   if (event == OC::APP_EVENT_RESUME) Resume();
+  if (event == OC::APP_EVENT_SUSPEND) Suspend();
+}
+
+// The platform clock is shared by the apps that host it, so (X)AND(N)OR keeps
+// its own tempo: taken when you leave the app, put back when it resumes (and
+// at power-up, from the saved working patch). A clock saved running starts
+// again; a running clock is never stopped here.
+FLASHMEM void XandNor::Resume() {
+#ifdef XANDNOR_CLOCK
+  if (!(clock_store_flags & 1)) return;
+  ClockSetup_instance.OnDataReceive(clock_store);
+  if ((clock_store_flags & 2) && !HS::clock_m.IsRunning()) HS::clock_m.Start(true);
+#endif
+}
+
+// Run/Stop: a stopped clock starts from the top (dividers and patterns
+// restart, as the platform's start does); a running or waiting one stops.
+FLASHMEM void XandNor::ClockRunStop() {
+#ifdef XANDNOR_CLOCK
+  if (HS::clock_m.IsRunning() || HS::clock_m.IsPaused()) HS::clock_m.Stop();
+  else HS::clock_m.Start();
+#endif
+}
+
+// Pause/continue: a running clock holds where it is; continuing picks up
+// with a beat at once, keeping dividers and patterns where they were. A
+// stopped clock waits instead, and starts on the first pulse at TR 1 or MIDI
+// clock (or when continued). The platform also restarts a paused clock on a
+// sync pulse.
+FLASHMEM void XandNor::ClockPause() {
+#ifdef XANDNOR_CLOCK
+  if (HS::clock_m.IsRunning()) {
+    HS::clock_m.Pause();
+  } else if (HS::clock_m.IsPaused()) {
+    HS::clock_m.paused = 0;
+    HS::clock_m.Reset(true); // the next beat from now, keeping the count
+  } else {
+    HS::clock_m.Start(true);
+  }
+#endif
+}
+
+FLASHMEM void XandNor::Suspend() {
+#ifdef XANDNOR_CLOCK
+  clock_store = ClockSetup_instance.OnDataRequest();
+  clock_store_flags = 1 | ((HS::clock_m.IsRunning() || HS::clock_m.IsPaused()) ? 2 : 0);
+#endif
+  clock_overlay = false;
 }
 
 // Applies a preset load requested by the preset trigger, outside the interrupt.
@@ -3030,6 +3151,52 @@ FLASHMEM void XandNor::DrawScreensaver() const { DrawScope(false); }
 void XandNor::DrawDebugInfo() const {}
 
 FLASHMEM void XandNor::HandleButtonEvent(const UI::Event &event) {
+#ifdef XANDNOR_CLOCK
+  // A+B together opens or closes the platform's clock setup, as in Quadrants
+  // and Calibr8or, on every page. The two releases that follow are swallowed
+  // so they don't also turn the page (or open presets, if held).
+  // Transport, on every page (the platform and the audio engine use only
+  // short encoder presses): long-press right to run or stop the clock,
+  // long-press left to pause it or carry on.
+  if (event.type == UI::EVENT_BUTTON_LONG_PRESS) {
+    if (event.control == OC::CONTROL_BUTTON_R) { ClockRunStop(); return; }
+    if (event.control == OC::CONTROL_BUTTON_L) { ClockPause(); return; }
+  }
+  const bool ab = event.control == OC::CONTROL_BUTTON_UP || event.control == OC::CONTROL_BUTTON_DOWN;
+  if (ab && event.type == UI::EVENT_BUTTON_DOWN &&
+      event.mask == (OC::CONTROL_BUTTON_UP | OC::CONTROL_BUTTON_DOWN)) {
+    clock_overlay = !clock_overlay;
+    preset_mode = false;
+    ab_swallow = 2;
+    ab_swallow_until = millis() + 2000;
+    return;
+  }
+  if (ab && ab_swallow && (event.type == UI::EVENT_BUTTON_PRESS || event.type == UI::EVENT_BUTTON_LONG_PRESS)) {
+    if (int32_t(ab_swallow_until - millis()) > 0) {
+      --ab_swallow;
+      return;
+    }
+    ab_swallow = 0;
+  }
+  if (clock_overlay) {
+    // Encoder presses go to the clock setup (edit, play/stop, tap tempo); a
+    // single A or B closes it.
+    if (event.type == UI::EVENT_BUTTON_PRESS) {
+      if (event.control == OC::CONTROL_BUTTON_L || event.control == OC::CONTROL_BUTTON_R)
+        ClockSetup_instance.OnButtonPress();
+      else if (ab)
+        clock_overlay = false;
+    }
+    return;
+  }
+  // Global page, Clock row: an encoder press opens the clock setup.
+  if (page == XandNorDefs::PAGE_GLOBALS && !preset_mode && event.type == UI::EVENT_BUTTON_PRESS &&
+      (event.control == OC::CONTROL_BUTTON_L || event.control == OC::CONTROL_BUTTON_R) &&
+      (glob_cursor == XandNorDefs::GF_CLOCK_BPM || glob_cursor == XandNorDefs::GF_CLOCK_RUN)) {
+    clock_overlay = true;
+    return;
+  }
+#endif
 #ifdef XANDNOR_AUDIO
   // Audio page: every button goes to the audio engine, as in Quadrants. A or B
   // pressed at its top level hands back: A to the previous page, B to the next.
@@ -3082,6 +3249,13 @@ FLASHMEM void XandNor::HandleButtonEvent(const UI::Event &event) {
 }
 
 FLASHMEM void XandNor::HandleEncoderEvent(const UI::Event &event) {
+#ifdef XANDNOR_CLOCK
+  if (clock_overlay) { // both encoders drive the clock setup, as in Quadrants
+    if (event.control == OC::CONTROL_ENCODER_L) ClockSetup_instance.OnLeftEncoderMove(event.value);
+    if (event.control == OC::CONTROL_ENCODER_R) ClockSetup_instance.OnEncoderMove(event.value);
+    return;
+  }
+#endif
 #ifdef XANDNOR_AUDIO
   if (page == XandNorDefs::PAGE_AUDIO && !preset_mode) {
     audio_app.HandleEncoderEvent(event);

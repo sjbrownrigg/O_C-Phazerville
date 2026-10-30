@@ -35,6 +35,7 @@ Panel labels used here: outputs **A–H**, CV inputs **1–8** (shown on screen 
 - [Mods](#mods)
   - [Mod examples](#mod-examples)
 - [Global](#global)
+  - [Clock](#clock)
 - [Audio](#audio)
 - [Scope](#scope)
 - [Presets and banks](#presets-and-banks)
@@ -48,7 +49,7 @@ Panel labels used here: outputs **A–H**, CV inputs **1–8** (shown on screen 
 
 The default patch makes music from one clock, so you can hear the app before changing anything.
 
-1. **Clock it.** Patch a steady clock (quarter notes, around 120 BPM) into **TR 1**. On the Overview, the CH1–CH4 boxes flash with every clock.
+1. **Clock it.** Patch a steady clock (quarter notes, around 120 BPM) into **TR 1**. On the Overview, the CH1–CH4 boxes flash with every clock. No clock to hand? Long-press the right encoder to start the internal clock, then set each channel's **Source** to **CL1** (see [Clock](#clock)).
 2. **Listen.** Patch **A** to a kick or any trigger input: it fires a 10 ms trigger on every clock. Patch **E** to a hi-hat: it fires a short gate just after each clock (the slice between CH1 and CH2). **H** is high in the gap after CH4's 250 ms gate, so it makes a good off-beat gate. The [Default patch](#default-patch) lists all eight.
 3. **Change the logic.** Press **X** for Routing, move to E's function with the left encoder, and turn the right encoder: AND, OR, XNOR and the others each give a different pattern at once.
 4. **Double up.** Press **B** twice from the Overview to reach CH2. Turn the left encoder one step to the divider (next to Source), then turn the right encoder to **x2**. CH2 now fires twice per clock, so B and E play eighth notes.
@@ -64,6 +65,9 @@ The default patch makes music from one clock, so you can hear the app before cha
 | Left encoder turn | Move the cursor between fields (pages with long lists scroll to follow). Past the last field it wraps round to the first, and back, on Routing, Outputs, Global and Scope; the channel pages and Mods stop at the ends |
 | Right encoder turn | Change the selected value directly; there is no press to start editing |
 | Long-press **A**, or **Y** | Open or close the preset overlay |
+| **A** + **B** together | Open or close the clock setup (see [Clock](#clock)) |
+| Long-press right encoder | Run or stop the clock |
+| Long-press left encoder | Pause the clock, or carry on |
 | **X** | Jump to the Routing page; press again to go back |
 | **Z** | Not used by the app: it remains the platform's menu modifier (Z + encoder press) |
 
@@ -89,7 +93,7 @@ Used by a channel's **Source** and **Reset**, a Mod's **Trig** or **Sync**, **Rs
 | **OutA**–**OutH** | (X)AND(N)OR's own outputs, read back one tick later |
 | **VrtI**–**VrtP** | The platform's virtual outputs, shared with Quadrants |
 | **M 1**… | The platform's MIDI mappings |
-| **CL1**, **CL4**, **RUN**, **RST** | The platform's clock, which follows Quadrants' clock setup; it doesn't run in this app |
+| **CL1**, **CL4**, **RUN**, **RST** | The internal [clock](#clock): **CL1** a pulse per beat, **CL4** four per beat, **RUN** high while it runs, **RST** high while it is stopped |
 | **–** | Off |
 
 - **Tip:** a channel source (**CH1>** and so on) is read one tick (60 µs) after that channel's edge. That never matters for sound, but it does for resets: see the **Reset** row on the [channel pages](#channel-pages-ch1ch4).
@@ -335,6 +339,7 @@ Settings that stay put when a preset loads, so whatever drives preset changes an
 
 | Row | Setting |
 | --- | --- |
+| **Clock** | The internal clock's tempo in BPM, and **Run**, **Wait** or **Stop** (turn right to run, left to stop). Press either encoder on this row for the full clock setup: see [Clock](#clock) |
 | **Rst all** | The global reset: a trigger that resets every channel (as each channel's own **Reset** does), restarts every LFO and every Rand's own clock, and clears TOGL and LTCH outputs |
 | **Preset** | A CV source and depth that pick slot 1–8 of the current bank (0–5 V, about 0.6 V per slot) |
 | **Load on** | The trigger that loads the slot the Preset CV points to. With no Preset CV set, each trigger steps to the next saved slot ("next") |
@@ -345,6 +350,27 @@ Settings that stay put when a preset loads, so whatever drives preset changes an
 - **Line everything up:** send **Rst all** the same pulse as your sequencer's reset to bring dividers, Euclidean patterns and LFOs back in line together. A channel used as **Rst all** arrives one tick late, as with a channel's own Reset, so use an input for a reset that lines up with the clock.
 - **Play a song from presets:** save each section in its own slot, leave **Preset** off and set **Load on** to a trigger that fires once per section (a channel at /16, for example). Each trigger moves on to the next saved slot.
 - **Keep the sound:** set **Audio** to Off to change rhythms with a preset load while the sound stays the same.
+
+### Clock
+
+(X)AND(N)OR runs the platform's own clock, the one Quadrants and Calibr8or use, so it can make its own tempo instead of needing one patched in. It drives the **CL1**, **CL4**, **RUN** and **RST** trigger sources, which every trigger list already offers.
+
+| Control | Action |
+| --- | --- |
+| Long-press right encoder | **Run** or **Stop**. Starting begins from the top: dividers and Euclidean patterns restart |
+| Long-press left encoder | **Pause** a running clock, then long-press again to carry on with a beat at once, with dividers and patterns where they were. On a stopped clock it **waits** instead, starting on the first pulse at TR 1 or the first MIDI clock |
+| **A** + **B** together, or an encoder press on the Global page's Clock row | The full clock setup: tempo (press the encoder on Tempo repeatedly to tap it), shuffle, the external clock's PPQN, MIDI and more, exactly as in Quadrants. Turn to move, press to edit; a single **A** or **B** closes it |
+
+The header shows a metronome while the clock runs, and a pause sign while it pauses or waits.
+
+- **Sync.** While it runs, the clock follows pulses at **TR 1** (at the setup's PPQN) and MIDI clock, and it sends MIDI clock and start/stop. A pulse at TR 1 also starts a paused or waiting clock, so with an external clock still running, **Pause** lasts only until its next pulse.
+- **Its own tempo.** The clock is shared with Quadrants, so (X)AND(N)OR keeps its own setting: it is saved with the working patch and put back whenever you come back to the app, and a clock saved running starts again at power-up. Loading a preset doesn't change it.
+
+**Tips**
+
+- **Instant clock:** long-press the right encoder and set each channel's **Source** to **CL1**: the default patch now plays at the clock's tempo. Use **CL4** for sixteenths, or the channel dividers (x2, /3 …) for every other rate.
+- **Rewind on stop:** set **Rst all** to **RST**. Each time the clock stops, everything goes back to the start, LFOs included, ready for the next run.
+- **Start in time with another module:** with the clock stopped, long-press the left encoder to make it wait, then start the other module: the first pulse at TR 1 starts (X)AND(N)OR with it.
 
 ## Audio
 
